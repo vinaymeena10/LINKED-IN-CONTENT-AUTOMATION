@@ -1,0 +1,12 @@
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30,<1.0
+jinja2>=3.1,<4.0
+python-multipart>=0.0.9
+SQLAlchemy>=2.0,<3.0
+APScheduler>=3.10,<4.0
+feedparser>=6.0,<7.0
+google-genai>=1.0,<2.0
+requests>=2.32,<3.0
+cryptography>=43.0
+psycopg[binary]>=3.2,<4.0
+python-dotenv>=1.0,<2.0

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LinkedIn Content Studio</title>
+<style>
+:root{font-family:Inter,Segoe UI,Arial,sans-serif;color:#172033;background:#f5f8fc}*{box-sizing:border-box}body{margin:0}.top{background:#fff;border-bottom:1px solid #dce5f0;padding:22px max(20px,calc((100% - 1120px)/2));display:flex;justify-content:space-between;align-items:center;gap:18px}.brand{font-size:21px;font-weight:800;color:#174ea6}.sub{color:#667085;font-size:13px;margin-top:4px}.wrap{max-width:1120px;margin:26px auto;padding:0 18px}.actions{display:flex;gap:10px;flex-wrap:wrap}button,.btn{border:0;border-radius:9px;background:#175cd3;color:white;padding:10px 14px;font-weight:700;cursor:pointer;text-decoration:none;font-size:13px}.secondary{background:white;color:#175cd3;border:1px solid #bfd2f4}.danger{background:#b42318}.notice{background:#eaf2ff;color:#174ea6;border:1px solid #c9dcff;padding:12px 15px;border-radius:10px;margin-bottom:18px}.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:24px}.stat,.card,.panel{background:white;border:1px solid #e0e7f0;border-radius:14px;padding:16px}.stat b{font-size:25px;display:block}.stat span{font-size:12px;color:#667085}.heading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:24px 0 14px}.heading h2{font-size:19px;margin:0}.card{margin-bottom:15px}.meta{font-size:12px;color:#667085;display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}.tag{background:#eef4ff;color:#175cd3;border-radius:20px;padding:4px 9px;font-size:11px;font-weight:700}.card h3{font-size:17px;margin:9px 0}.source{font-size:12px;overflow-wrap:anywhere}.source a{color:#175cd3}.draft{width:100%;min-height:180px;border:1px solid #ccd6e3;border-radius:10px;padding:12px;font:14px/1.55 Inter,Segoe UI,Arial;resize:vertical}.cardfoot{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}.btnrow{display:flex;gap:8px;flex-wrap:wrap}.status{font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.03em}.error{color:#b42318;font-size:12px;margin-top:8px}.empty{padding:30px;text-align:center;color:#667085;background:white;border:1px dashed #cbd5e1;border-radius:14px}@media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}.top{align-items:flex-start;flex-direction:column}}
+</style></head><body>
+<header class="top"><div><div class="brand">LinkedIn Content Studio</div><div class="sub">Research → original draft → your approval → LinkedIn</div></div><div class="actions"><a class="btn secondary" href="/settings">Settings · {% if connected %}LinkedIn connected{% else %}Connect LinkedIn{% endif %}</a><form action="/generate" method="post"><button>Find content & generate drafts</button></form></div></header>
+<main class="wrap">{% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+<div class="stats">{% for key,label in [('pending','Needs review'),('approved','Approved'),('published','Published'),('rejected','Rejected'),('failed','Failed')] %}<div class="stat"><b>{{ stats[key] }}</b><span>{{ label }}</span></div>{% endfor %}</div>
+<div class="panel"><strong>Content allocation</strong><div class="sub">30% Data science · 30% AI research · 20% Cloud/automation · 15% Careers · 5% Marketing/brands. Percentages are targets over time, not a guarantee for every small batch.</div></div>
+<section class="panel" style="margin-top:16px">
+  <div class="heading">
+    <h2>Daily content plan</h2>
+    <span class="sub">One approved post per day</span>
+  </div>
+
+  <p class="sub">
+    Plan the next seven days using approved posts.
+    Planning does not publish anything automatically.
+  </p>
+
+  <form action="/planner/build" method="post">
+    <button class="secondary" type="submit">
+      Build next 7 days
+    </button>
+  </form>
+
+  {% if planned_posts %}
+    <ul style="padding-left:20px;line-height:1.8">
+      {% for planned in planned_posts %}
+        <li>
+          <strong>{{ planned.planned_date }}</strong>
+          — {{ planned.title }}
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="sub">
+      No upcoming posts planned. Approve drafts, then build your plan.
+    </p>
+  {% endif %}
+</section>
+
+<div class="heading"><h2>Draft queue</h2><span class="sub">Review the source and edit before approval</span></div>
+{% for post in posts %}<article class="card"><div class="meta"><span class="tag">{{ categories[post.category]['weight'] }}% target</span><span>{{ categories[post.category]['label'] }}</span><span class="status">{{ post.status }}</span><span>Created {{ post.created_at.strftime('%d %b %Y, %H:%M') }} UTC</span></div><h3>{{ post.title }}</h3><div class="source">Source: <a href="{{ post.source_url }}" target="_blank" rel="noopener noreferrer">{{ post.source_name }} — open original</a>{% if post.source_published %} · {{ post.source_published }}{% endif %}</div>
+    {% if post.planned_date %}
+  <span class="tag">Planned {{ post.planned_date }}</span>
+{% endif %}
+<form action="/posts/{{ post.id }}/save" method="post"><textarea class="draft" name="draft" {% if post.status == 'published' %}disabled{% endif %}>{{ post.draft }}</textarea><div class="cardfoot"><span class="sub">{% if post.linkedin_post_id %}LinkedIn ID: {{ post.linkedin_post_id }}{% endif %}</span><div class="btnrow">{% if post.status != 'published' %}<button class="secondary" type="submit">Save edits</button>{% endif %}</div></div></form>
+{% if post.error %}<div class="error">{{ post.error }}</div>{% endif %}
+{% if post.status != 'published' %}<div class="cardfoot"><div class="sub">Publishing is never automatic. Approval is required first.</div><div class="btnrow"><form action="/posts/{{ post.id }}/approve" method="post"><button class="secondary" type="submit">Approve</button></form><form action="/posts/{{ post.id }}/publish" method="post" onsubmit="return confirm('Publish this exact text to your LinkedIn profile now?');"><button type="submit" {% if post.status != 'approved' %}disabled title="Approve first"{% endif %}>Publish to LinkedIn</button></form><form action="/posts/{{ post.id }}/reject" method="post"><button class="danger" type="submit">Reject</button></form></div></div>{% endif %}
+</article>{% else %}<div class="empty">No drafts yet. Click “Find content & generate drafts” to start.</div>{% endfor %}
+</main></body></html>
