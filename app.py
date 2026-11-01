@@ -180,6 +180,7 @@ class Post(Base):
     error = Column(Text, default="")
     fingerprint = Column(String(64), unique=True, nullable=False)
     account_id = Column(Integer, nullable=True, index=True)
+    image_url = Column(String(1500), default="")
 
 class LinkedInAccount(Base):
     __tablename__ = "linkedin_accounts"
@@ -240,9 +241,7 @@ JOB_DOMAINS = {
 # Format: company name | ATS provider | board slug
 # Add companies through the Job Search page. Slugs are the public board identifiers.
 DEFAULT_JOB_COMPANIES = [
-    ("Airbnb", "ashby", "airbnb"),
-    ("Notion", "ashby", "notion"),
-    ("Ramp", "ashby", "ramp"),
+    # Greenhouse boards
     ("Canva", "greenhouse", "canva"),
     ("Figma", "greenhouse", "figma"),
     ("Stripe", "greenhouse", "stripe"),
@@ -250,6 +249,51 @@ DEFAULT_JOB_COMPANIES = [
     ("Duolingo", "greenhouse", "duolingo"),
     ("Coinbase", "greenhouse", "coinbase"),
     ("Rippling", "greenhouse", "rippling"),
+    ("Brex", "greenhouse", "brex"),
+    ("Plaid", "greenhouse", "plaid"),
+    ("Webflow", "greenhouse", "webflow"),
+    ("Grammarly", "greenhouse", "grammarly"),
+    ("Asana", "greenhouse", "asana"),
+    ("Airtable", "greenhouse", "airtable"),
+    ("Miro", "greenhouse", "miro"),
+    ("Intercom", "greenhouse", "intercom"),
+    ("Amplitude", "greenhouse", "amplitude"),
+    ("Cloudflare", "greenhouse", "cloudflare"),
+    ("MongoDB", "greenhouse", "mongodb"),
+    ("Elastic", "greenhouse", "elastic"),
+    ("GitLab", "greenhouse", "gitlab"),
+    ("Reddit", "greenhouse", "reddit"),
+    ("DoorDash", "greenhouse", "doordash"),
+    ("Instacart", "greenhouse", "instacart"),
+    ("Toast", "greenhouse", "toast"),
+    ("Gusto", "greenhouse", "gusto"),
+    ("Oscar Health", "greenhouse", "oscar"),
+    ("Vanta", "greenhouse", "vanta"),
+    ("Samsara", "greenhouse", "samsara"),
+    ("Scale AI", "greenhouse", "scaleai"),
+    ("Anduril", "greenhouse", "andurilindustries"),
+    # Ashby boards
+    ("Airbnb", "ashby", "airbnb"),
+    ("Notion", "ashby", "notion"),
+    ("Ramp", "ashby", "ramp"),
+    ("Linear", "ashby", "linear"),
+    ("Mercury", "ashby", "mercury"),
+    ("Vercel", "ashby", "vercel"),
+    ("Deel", "ashby", "deel"),
+    ("ElevenLabs", "ashby", "elevenlabs"),
+    ("Perplexity", "ashby", "perplexity"),
+    ("OpenAI", "ashby", "openai"),
+    ("Cursor", "ashby", "cursor"),
+    ("Lovable", "ashby", "lovable"),
+    # Lever boards
+    ("Netflix", "lever", "netflix"),
+    ("Shopify", "lever", "shopify"),
+    ("Twitch", "lever", "twitch"),
+    ("Oura", "lever", "oura"),
+    ("Affirm", "lever", "affirm"),
+    ("Faire", "lever", "faire"),
+    ("Checkr", "lever", "checkr"),
+    ("Gong", "lever", "gong"),
     ("Lever Demo", "lever", "lever"),
 ]
 
@@ -321,6 +365,10 @@ def fetch_company_jobs(company):
 
 Base.metadata.create_all(engine)
 app = FastAPI(title=APP_NAME)
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
+Path("static/generated").mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 scheduler = BackgroundScheduler(timezone=os.getenv("APP_TIMEZONE", "Asia/Kolkata"))
 
@@ -342,6 +390,8 @@ with engine.begin() as connection:
         )
     if "account_id" not in columns:
         connection.execute(text("ALTER TABLE posts ADD COLUMN account_id INTEGER"))
+    if "image_url" not in columns:
+        connection.execute(text("ALTER TABLE posts ADD COLUMN image_url VARCHAR(1500) DEFAULT ''"))
 
 # Preserve a previously connected single LinkedIn account when upgrading.
 with SessionLocal() as db:
@@ -1266,6 +1316,37 @@ def jobs_page(request: Request, notice: str = ""):
                  "domains": list(JOB_DOMAINS.keys()), "companies": get_job_companies()}
     )
 
+@app.post("/jobs/companies/detect")
+def detect_job_company(company_name: str = Form(...), careers_url: str = Form(...)):
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(careers_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("Enter a valid careers-page URL.")
+        response = requests.get(careers_url, headers={"User-Agent":"Mozilla/5.0 LinkedInContentStudio"}, timeout=20)
+        response.raise_for_status()
+        page = response.text[:2_000_000]
+        patterns = [
+            ("greenhouse", r"(?:boards|job-boards)\.greenhouse\.io/([a-zA-Z0-9_-]+)"),
+            ("lever", r"jobs\.lever\.co/([a-zA-Z0-9_-]+)"),
+            ("ashby", r"jobs\.ashbyhq\.com/([a-zA-Z0-9_-]+)"),
+        ]
+        detected = None
+        for provider, pattern in patterns:
+            match = re.search(pattern, page, re.I)
+            if match:
+                detected = {"name": company_name.strip()[:300], "provider": provider, "slug": match.group(1)}
+                break
+        if not detected:
+            return RedirectResponse("/jobs?notice=No+supported+ATS+detected.+This+company+may+use+Workday+or+a+custom+career+site.", status_code=303)
+        companies = get_job_companies()
+        companies = [c for c in companies if c["name"].lower() != detected["name"].lower()]
+        companies.append(detected)
+        db_set("job_companies", json.dumps(companies))
+        return RedirectResponse("/jobs?notice=" + requests.utils.quote(f'Detected {detected["provider"]} board for {detected["name"]}.'), status_code=303)
+    except Exception as exc:
+        return RedirectResponse("/jobs?notice=" + requests.utils.quote(f"ATS detection failed: {str(exc)[:180]}"), status_code=303)
+
 @app.post("/jobs/companies/save")
 def save_job_companies(companies_text: str = Form("")):
     companies = []
@@ -1374,6 +1455,45 @@ def generate_job_post(job_id: int):
         db.commit()
     return RedirectResponse("/?notice=Job+post+generated+in+Drafts", status_code=303)
 
+
+@app.post("/posts/{post_id}/image")
+def generate_post_image(post_id: int):
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if not api_key:
+        return RedirectResponse("/?notice=Set+OPENAI_API_KEY+in+Render+to+enable+post+image+generation", status_code=303)
+    with SessionLocal() as db:
+        post = db.get(Post, post_id)
+        if not post:
+            raise HTTPException(404, "Post not found")
+        prompt = (
+            "Create a polished, professional LinkedIn editorial visual. "
+            "No text, no logos, no watermarks. The visual should communicate this post's subject "
+            "through a clear central concept, tasteful composition, and premium art direction. "
+            "Use a visual style appropriate to the topic and industry. Post title: "
+            + post.title[:400] + ". Post content: " + post.draft[:1800]
+        )
+        try:
+            response = requests.post(
+                "https://api.openai.com/v1/images/generations",
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={"model": os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-1"), "prompt": prompt,
+                      "size": "1024x1024", "quality": "medium"},
+                timeout=180,
+            )
+            response.raise_for_status()
+            image_data = response.json()["data"][0].get("b64_json")
+            if not image_data:
+                raise RuntimeError("Image API returned no image data.")
+            from pathlib import Path
+            image_dir = Path("static/generated")
+            image_dir.mkdir(parents=True, exist_ok=True)
+            filename = f"post_{post.id}_{secrets.token_hex(5)}.png"
+            (image_dir / filename).write_bytes(base64.b64decode(image_data))
+            post.image_url = "/static/generated/" + filename
+            db.commit()
+        except Exception as exc:
+            return RedirectResponse("/?notice=" + requests.utils.quote(f"Image generation failed: {str(exc)[:180]}"), status_code=303)
+    return RedirectResponse("/?notice=Post+image+generated", status_code=303)
 
 @app.get("/health")
 def health(): return {"ok":True,"app":APP_NAME,"time":datetime.now(timezone.utc).isoformat()}

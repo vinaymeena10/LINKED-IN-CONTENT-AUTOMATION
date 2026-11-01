@@ -1,53 +1,52 @@
 <!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Job Search · LinkedIn Content Studio</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Job Discovery · LinkedIn Growth Studio</title>
 <style>
-body{font-family:Inter,Segoe UI,Arial,sans-serif;background:#f5f8fc;color:#172033;margin:0}
-.wrap{max-width:1150px;margin:28px auto;padding:0 18px}.panel,.job{background:#fff;border:1px solid #e0e7f0;border-radius:14px;padding:18px;margin:14px 0}
-a,button{display:inline-block;background:#175cd3;color:#fff;border:0;border-radius:8px;padding:10px 14px;text-decoration:none;font-weight:700;cursor:pointer}
-.secondary{background:#fff;color:#175cd3;border:1px solid #bfd2f4}.notice{background:#eaf2ff;color:#174ea6;padding:12px;border-radius:9px;margin:14px 0}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:9px}.field{display:flex;flex-direction:column;gap:6px;margin:12px 0}
-input,select,textarea{padding:10px;border:1px solid #ccd6e3;border-radius:8px;font:inherit}.company-list{width:100%;min-height:150px;font:13px/1.5 monospace}
-.meta{color:#667085;font-size:13px;margin:7px 0}.job h3{margin:5px 0}.tag{display:inline-block;background:#eef4ff;color:#175cd3;border-radius:20px;padding:4px 8px;font-size:12px}
-@media(max-width:650px){.wrap{padding:0 12px}}
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Manrope:wght@600;700;800&display=swap');
+:root{color-scheme:dark;font-family:'DM Sans',sans-serif;background:#080d1b;color:#edf2ff}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 10% 0%,#29205d,transparent 34%),radial-gradient(ellipse at 90% 5%,#064256,transparent 28%),linear-gradient(135deg,#080d1b,#10182d)}
+.wrap{max-width:1320px;margin:0 auto;padding:28px 22px}.top{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:25px}
+.brand{font:800 23px Manrope;color:#fff}.brand:before{content:"in";display:inline-grid;place-items:center;width:31px;height:31px;margin-right:10px;border-radius:8px;background:linear-gradient(135deg,#22d3ee,#6366f1);font-size:18px}
+h1,h2,h3{font-family:Manrope;color:#f7f8ff;letter-spacing:-.4px}h1{font-size:32px;margin:8px 0}h2{font-size:19px;margin:0 0 10px}p,.meta{color:#a6b6d3;line-height:1.6}.meta{font-size:13px}
+a,button{display:inline-block;background:linear-gradient(110deg,#7c3aed,#2563eb);color:white;border:1px solid transparent;border-radius:11px;padding:11px 15px;text-decoration:none;font-weight:700;font-size:13px;cursor:pointer}
+.secondary{background:#17243d;color:#d3e1fa;border-color:#344767}.notice{background:linear-gradient(100deg,#182d52,#292153);color:#e0eaff;padding:14px;border:1px solid #405b8b;border-radius:13px;margin:15px 0}
+.panel,.job{background:linear-gradient(145deg,rgba(24,38,66,.96),rgba(14,24,44,.98));border:1px solid #2d4265;border-radius:18px;padding:21px;margin:16px 0;box-shadow:0 14px 35px #0003}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.field{display:flex;flex-direction:column;gap:7px;margin:13px 0;color:#dce7fb;font-size:13px;font-weight:600}
+input,select,textarea{width:100%;padding:12px 13px;background:#0c1830;color:#eaf0ff;border:1px solid #354969;border-radius:10px;font:inherit}
+input[type=checkbox]{width:auto;accent-color:#8b5cf6}.domain{display:flex;align-items:center;gap:9px;background:#111f39;border:1px solid #2b4266;border-radius:11px;padding:11px;color:#d9e5fa;font-size:13px}
+.company-list{min-height:190px;font:13px/1.6 ui-monospace,monospace}.tag{display:inline-block;background:#263d68;color:#c6dcff;border:1px solid #3c5d8d;border-radius:30px;padding:5px 10px;font-size:11px}
+.job{padding:18px 20px}.job h3{margin:10px 0 4px}.job p{font-size:13px}.job a{margin-top:5px}.job form{display:inline-block;margin-top:8px}
+.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.hero{padding:27px 30px;border-radius:21px;border:1px solid #40518b;background:radial-gradient(circle at 85% 25%,#3b3d9a,transparent 28%),linear-gradient(110deg,#21194c,#102e50 68%,#0d5261);margin:20px 0 24px}
+@media(max-width:650px){.wrap{padding:18px 12px}.panel{padding:15px}.hero{padding:20px}}
 </style></head><body><main class="wrap">
-<a class="secondary" href="/">← Back to Content Studio</a>
-<h1>Universal Job Search</h1>
-<p class="meta">Search public job boards for roles across industries, then generate a LinkedIn announcement for your review.</p>
+<header class="top"><div class="brand">LinkedIn Growth Studio</div><a class="secondary" href="/">← Back to dashboard</a></header>
+<section class="hero"><div class="tag">CAREER DISCOVERY ENGINE</div><h1>Find your next opportunity.</h1><p>Search across industries, countries and supported company career boards. Turn a relevant opening into a LinkedIn draft for your review.</p><div class="tag">50+ starter company boards · Greenhouse · Lever · Ashby</div></section>
 {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
-<section class="panel"><h2>Search preferences</h2>
+<section class="panel"><div class="section-head"><h2>Search opportunities</h2><span class="meta">Choose a country instead of typing a location</span></div>
 <form action="/jobs/search" method="post">
-<strong>Industries and domains</strong><div class="grid" style="margin:12px 0">
-{% for domain in domains %}<label><input type="checkbox" name="domains" value="{{ domain }}"> {{ domain }}</label>{% endfor %}
+<strong>Industries and domains</strong><div class="grid" style="margin:13px 0 18px">
+{% for domain in domains %}<label class="domain"><input type="checkbox" name="domains" value="{{ domain }}"> {{ domain }}</label>{% endfor %}
 </div>
-<div class="field"><label>Custom domain or profession</label><input name="custom_domain" placeholder="e.g. Fashion, Architecture, Brand Strategy"></div>
-<div class="field"><label>Specific job titles / keywords (comma separated)</label><input name="keywords" placeholder="Brand Strategist, Social Media Manager, Digital Marketing Manager"></div>
 <div class="grid">
-<div class="field"><label>Location</label><input name="location" value="India" placeholder="India, Mumbai, Remote, Anywhere"></div>
+<div class="field"><label>Custom domain or profession</label><input name="custom_domain" placeholder="e.g. Fashion, Architecture, Brand Strategy"></div>
+<div class="field"><label>Job titles / keywords</label><input name="keywords" placeholder="Brand Strategist, Data Scientist, Product Manager"></div>
+<div class="field"><label>Country / location</label><select name="location">
+<option value="India" selected>India</option><option value="United States">United States</option><option value="United Kingdom">United Kingdom</option><option value="Canada">Canada</option><option value="Australia">Australia</option><option value="Germany">Germany</option><option value="France">France</option><option value="Netherlands">Netherlands</option><option value="Singapore">Singapore</option><option value="United Arab Emirates">United Arab Emirates</option><option value="Remote">Remote / Worldwide</option><option value="Anywhere">Any country</option>
+</select></div>
 <div class="field"><label>Experience level</label><select name="experience"><option>All experience levels</option><option>Fresher / Entry level</option><option>1–3 years</option><option>3–5 years</option><option>5+ years</option></select></div>
-</div>
-<p class="meta">Experience is collected as a preference; public ATS listings do not always expose structured experience requirements.</p>
-<button type="submit">Search company career pages</button>
+</div><p class="meta">Experience is captured as a preference. Public job boards do not always expose standardized experience data, so it may not be a strict filter.</p>
+<button type="submit">⌕ Search company career boards</button>
 </form></section>
-<section class="panel"><h2>Company directory</h2>
-<p class="meta">Add or edit company career-board sources. Supported public ATS providers: Greenhouse, Lever and Ashby. One company per line: Company Name | provider | board-slug.</p>
-<form action="/jobs/companies/save" method="post">
-<textarea class="company-list" name="companies_text">{% for c in companies %}{{ c.name }} | {{ c.provider }} | {{ c.slug }}
-{% endfor %}</textarea>
-<button type="submit">Save company directory</button>
-</form>
-</section>
-<section><h2>Discovered jobs ({{ jobs|length }})</h2>
-{% for job in jobs %}
-<article class="job">
-<div class="tag">{{ job.source }}</div><h3>{{ job.title }}</h3>
-<strong>{{ job.company }}</strong>
-<div class="meta">{{ job.location or 'Location not specified' }} · {{ job.workplace_type or job.employment_type or 'Work mode not specified' }} · {{ job.posted_at or 'Posting date not provided' }}</div>
-<p>{{ job.description[:500] }}{% if job.description|length > 500 %}…{% endif %}</p>
-<p><a href="{{ job.apply_url }}" target="_blank" rel="noopener noreferrer">Original application page ↗</a></p>
-<form action="/jobs/{{ job.id }}/generate" method="post"><button type="submit">Generate LinkedIn job post</button></form>
-</article>
-{% else %}<div class="panel">No jobs discovered yet. Select domains and run a search.</div>{% endfor %}
+<section class="panel"><h2>Automatic ATS detection</h2><p class="meta">Paste a company's careers page. The app checks its page for Greenhouse, Lever or Ashby board links, detects the provider and slug, and adds it to your directory. Workday and custom ATS platforms are not currently supported by this detector.</p>
+<form action="/jobs/companies/detect" method="post"><div class="grid">
+<div class="field"><label>Company name</label><input name="company_name" required placeholder="e.g. Ogilvy"></div>
+<div class="field"><label>Company careers page URL</label><input name="careers_url" type="url" required placeholder="https://company.com/careers"></div>
+</div><button type="submit">✦ Detect ATS and add company</button></form></section>
+<section class="panel"><div class="section-head"><h2>Company directory</h2><span class="tag">{{ companies|length }} company sources</span></div>
+<p class="meta">The starter directory includes a broad mix of technology, consumer, finance, healthcare and business companies. You can edit it below. Provider slugs are public ATS board identifiers; a company may change providers or board names over time.</p>
+<form action="/jobs/companies/save" method="post"><textarea class="company-list" name="companies_text">{% for c in companies %}{{ c.name }} | {{ c.provider }} | {{ c.slug }}
+{% endfor %}</textarea><button type="submit">Save directory changes</button></form></section>
+<section><div class="section-head"><h2>Discovered opportunities</h2><span class="tag">{{ jobs|length }} saved listings</span></div>
+{% for job in jobs %}<article class="job"><span class="tag">{{ job.source }}</span><h3>{{ job.title }}</h3><strong>{{ job.company }}</strong><div class="meta">{{ job.location or 'Location not specified' }} · {{ job.workplace_type or job.employment_type or 'Work mode not specified' }} · {{ job.posted_at or 'Posting date not provided' }}</div><p>{{ job.description[:500] }}{% if job.description|length > 500 %}…{% endif %}</p><a href="{{ job.apply_url }}" target="_blank" rel="noopener noreferrer">Open original application ↗</a><form action="/jobs/{{ job.id }}/generate" method="post"><button type="submit">Generate LinkedIn job post</button></form></article>
+{% else %}<div class="panel"><p>No jobs discovered yet. Select industries and run a search to populate this section.</p></div>{% endfor %}
 </section></main></body></html>
