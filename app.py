@@ -178,6 +178,15 @@ class Post(Base):
     linkedin_post_id = Column(String(300), default="")
     error = Column(Text, default="")
     fingerprint = Column(String(64), unique=True, nullable=False)
+    account_id = Column(Integer, nullable=True, index=True)
+
+class LinkedInAccount(Base):
+    __tablename__ = "linkedin_accounts"
+    id = Column(Integer, primary_key=True)
+    person_id = Column(String(200), unique=True, nullable=False, index=True)
+    display_name = Column(String(300), default="LinkedIn member")
+    encrypted_token = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class Setting(Base):
     __tablename__ = "settings"
@@ -205,6 +214,18 @@ with engine.begin() as connection:
         connection.execute(
             text("ALTER TABLE posts ADD COLUMN topic VARCHAR(60)")
         )
+    if "account_id" not in columns:
+        connection.execute(text("ALTER TABLE posts ADD COLUMN account_id INTEGER"))
+
+# Preserve a previously connected single LinkedIn account when upgrading.
+with SessionLocal() as db:
+    legacy_token = db.get(Setting, "linkedin_token")
+    legacy_person = db.get(Setting, "linkedin_person_id")
+    if legacy_token and legacy_token.value and legacy_person and legacy_person.value:
+        existing = db.query(LinkedInAccount).filter_by(person_id=legacy_person.value).first()
+        if not existing:
+            db.add(LinkedInAccount(person_id=legacy_person.value, display_name="Existing LinkedIn account", encrypted_token=legacy_token.value))
+            db.commit()
 
 # Public feeds: configure/extend FEEDS_JSON for trusted sources. Search queries are discovery leads, not proof of a claim.
 DEFAULT_FEEDS = [
@@ -297,6 +318,37 @@ def get_token():
     
 def set_token(token):
     db_set("linkedin_token", secret_box().encrypt(token.encode()).decode())
+
+def get_linkedin_accounts():
+    with SessionLocal() as db:
+        return db.query(LinkedInAccount).order_by(LinkedInAccount.id.asc()).all()
+
+def save_linkedin_account(token, person_id, display_name):
+    encrypted = secret_box().encrypt(token.encode()).decode()
+    with SessionLocal() as db:
+        account = db.query(LinkedInAccount).filter_by(person_id=person_id).first()
+        if account is None:
+            account = LinkedInAccount(person_id=person_id)
+            db.add(account)
+        account.display_name = (display_name or "LinkedIn member").strip()[:300]
+        account.encrypted_token = encrypted
+        db.commit()
+
+def decrypt_account_token(account):
+    return secret_box().decrypt(account.encrypted_token.encode()).decode()
+
+def normalize_linkedin_bullets(value):
+    """Convert Markdown list markers to real Unicode bullets for LinkedIn text posts."""
+    lines = []
+    for line in (value or "").splitlines():
+        match = re.match(r"^(\s*)(?:[-*+]\s+)(.+)$", line)
+        if match:
+            line = f"{match.group(1)}• {match.group(2)}"
+        # LinkedIn receives plain text: remove Markdown bold/italic markers.
+        line = re.sub(r"\*\*(.*?)\*\*", r"\1", line)
+        line = re.sub(r"(?<!\w)\*([^*\n]+)\*(?!\w)", r"\1", line)
+        lines.append(line.rstrip())
+    return "\n".join(lines).strip()
 
 def fingerprint(url, title):
     return hashlib.sha256((url.strip().lower() + "|" + title.strip().lower()).encode()).hexdigest()
@@ -483,6 +535,7 @@ NON-NEGOTIABLE WRITING RULES:
 - Do not claim the author personally used, built, tested or witnessed anything
   unless the source explicitly says so (it usually will not).
 - Do not overstate an announcement's significance or turn speculation into fact.
+- For lists, use the actual Unicode bullet character • at the start of each list line. Never use Markdown asterisks (*) or hyphens (-) as bullet markers. Leave a blank line between list items where useful.
 - Use 2-4 relevant hashtags, only if they add value.
 - Put the source URL on the final line.
 - Return only the finished LinkedIn post.
@@ -534,7 +587,7 @@ conclusion. It should feel authored, not assembled from a template.
             draft = (response.text or "").strip()
             if draft:
                 print(f"Draft generated with Gemini ({model})")
-                return draft
+                return normalize_linkedin_bullets(draft)
             raise RuntimeError("Gemini returned an empty draft.")
         except Exception as exc:
             failures.append(f"Gemini: {exc}")
@@ -557,7 +610,7 @@ conclusion. It should feel authored, not assembled from a template.
             draft = (response.choices[0].message.content or "").strip()
             if draft:
                 print(f"Draft generated with Groq ({model})")
-                return draft
+                return normalize_linkedin_bullets(draft)
             raise RuntimeError("Groq returned an empty draft.")
         except Exception as exc:
             failures.append(f"Groq: {exc}")
@@ -569,7 +622,7 @@ conclusion. It should feel authored, not assembled from a template.
     cerebras_key = os.getenv("CEREBRAS_API_KEY", "").strip()
     if cerebras_key:
         try:
-            model = os.getenv("CEREBRAS_MODEL", "qwen-3.8-27b")
+            model = os.getenv("CEREBRAS_MODEL", "qwen-3-235b-a22b-instruct")
             client = Cerebras(api_key=cerebras_key)
             response = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
@@ -582,7 +635,7 @@ conclusion. It should feel authored, not assembled from a template.
             draft = (response.choices[0].message.content or "").strip()
             if draft:
                 print(f"Draft generated with Cerebras ({model})")
-                return draft
+                return normalize_linkedin_bullets(draft)
             raise RuntimeError("Cerebras returned an empty draft.")
         except Exception as exc:
             failures.append(f"Cerebras: {exc}")
@@ -793,14 +846,17 @@ def run_research_cycle(max_drafts=5):
 
     return created
 
-def linkedin_publish(post_text):
-    token = get_token()
-    if not token: raise RuntimeError("LinkedIn is not connected. Connect it in Settings first.")
-    person_id = db_get("linkedin_person_id")
-    if not person_id: raise RuntimeError("LinkedIn member ID missing. Reconnect LinkedIn.")
+def linkedin_publish(post_text, account_id):
+    with SessionLocal() as db:
+        account = db.get(LinkedInAccount, account_id)
+        if not account:
+            raise RuntimeError("Select a connected LinkedIn account before publishing.")
+        token = decrypt_account_token(account)
+        person_id = account.person_id
     version = os.getenv("LINKEDIN_API_VERSION", "202607")
     url = "https://api.linkedin.com/rest/posts"
-    payload = {"author": f"urn:li:person:{person_id}", "commentary": post_text, "visibility": "PUBLIC", "distribution": {"feedDistribution": "MAIN_FEED", "targetEntities": [], "thirdPartyDistributionChannels": []}, "lifecycleState": "PUBLISHED", "isReshareDisabledByAuthor": False}
+    clean_text = normalize_linkedin_bullets(post_text)
+    payload = {"author": f"urn:li:person:{person_id}", "commentary": clean_text, "visibility": "PUBLIC", "distribution": {"feedDistribution": "MAIN_FEED", "targetEntities": [], "thirdPartyDistributionChannels": []}, "lifecycleState": "PUBLISHED", "isReshareDisabledByAuthor": False}
     response = requests.post(url, headers={"Authorization":f"Bearer {token}", "Linkedin-Version":version, "X-Restli-Protocol-Version":"2.0.0", "Content-Type":"application/json"}, json=payload, timeout=30)
     if response.status_code not in (200, 201):
         raise RuntimeError(f"LinkedIn API returned {response.status_code}: {response.text[:800]}")
@@ -812,13 +868,9 @@ def dashboard(request: Request, notice: str = ""):
     today = datetime.now(ZoneInfo(timezone_name)).date().isoformat()
 
     with SessionLocal() as db:
-        posts = (
-            db.query(Post)
-            .filter(Post.status != "rejected")
-            .order_by(desc(Post.created_at))
-            .limit(100)
-            .all()
-        )
+        posts = db.query(Post).filter(Post.status.in_(["pending", "failed"])).order_by(desc(Post.created_at)).limit(100).all()
+        approved_posts = db.query(Post).filter(Post.status == "approved").order_by(desc(Post.created_at)).limit(100).all()
+        published_posts = db.query(Post).filter(Post.status == "published").order_by(desc(Post.published_at)).limit(100).all()
 
         stats = {
             status: db.query(Post)
@@ -850,6 +902,9 @@ def dashboard(request: Request, notice: str = ""):
         context={
             "request": request,
             "posts": posts,
+            "approved_posts": approved_posts,
+            "published_posts": published_posts,
+            "accounts": get_linkedin_accounts(),
             "stats": stats,
             "categories": DISPLAY_CATEGORIES,
             "topics": TOPICS,
@@ -857,7 +912,7 @@ def dashboard(request: Request, notice: str = ""):
             "writing_preferences": get_writing_preferences(),
             "notice": notice,
             "planned_posts": planned_posts,
-            "connected": bool(get_token()),
+            "connected": bool(get_linkedin_accounts()),
         },
     )
 
@@ -965,7 +1020,7 @@ def save_post(post_id: int, draft: str = Form(...)):
         post = db.get(Post, post_id)
         if not post: raise HTTPException(404, "Post not found")
         if post.status == "published": raise HTTPException(409, "Published posts cannot be edited here")
-        post.draft = draft.strip(); post.status = "pending"; post.error = ""; db.commit()
+        post.draft = normalize_linkedin_bullets(draft); post.status = "pending"; post.error = ""; db.commit()
     return RedirectResponse(url="/?notice=Draft+saved", status_code=303)
 
 @app.post("/posts/{post_id}/approve")
@@ -978,16 +1033,16 @@ def approve(post_id: int):
     return RedirectResponse(url="/?notice=Post+approved.+It+has+not+been+published", status_code=303)
 
 @app.post("/posts/{post_id}/publish")
-def publish(post_id: int):
+def publish(post_id: int, account_id: int = Form(...)):
     with SessionLocal() as db:
         post = db.get(Post, post_id)
         if not post: raise HTTPException(404, "Post not found")
         if post.status != "approved": raise HTTPException(409, "Approve the post before publishing")
         text = post.draft
     try:
-        post_id_remote = linkedin_publish(text)
+        post_id_remote = linkedin_publish(text, account_id)
         with SessionLocal() as db:
-            post = db.get(Post, post_id); post.status = "published"; post.published_at = datetime.utcnow(); post.linkedin_post_id = post_id_remote; post.error = ""; db.commit()
+            post = db.get(Post, post_id); post.status = "published"; post.published_at = datetime.utcnow(); post.linkedin_post_id = post_id_remote; post.account_id = account_id; post.error = ""; db.commit()
         msg = "Published successfully"
     except Exception as exc:
         with SessionLocal() as db:
@@ -1020,8 +1075,8 @@ def settings(request: Request, notice: str = ""):
     name="settings.html",
     context={
         "request": request,
-        "connected": bool(get_token()),
-        
+        "connected": bool(get_linkedin_accounts()),
+        "accounts": get_linkedin_accounts(),
         "notice": notice,
         "redirect_uri": linkedin_redirect_uri(request),
     },
@@ -1032,7 +1087,7 @@ def linkedin_start(request: Request):
     client_id = os.getenv("LINKEDIN_CLIENT_ID", "")
     redirect_uri = linkedin_redirect_uri(request)
     if not client_id or not redirect_uri: return RedirectResponse("/settings?notice=Set+LINKEDIN_CLIENT_ID+and+LINKEDIN_REDIRECT_URI+first", status_code=303)
-    state = secrets.token_urlsafe(24); db_set("oauth_state", state)
+    state = secrets.token_urlsafe(24); db_set("oauth_state_" + state, "pending")
     params = {"response_type":"code", "client_id":client_id, "redirect_uri":redirect_uri, "state":state, "scope":"openid profile w_member_social"}
     return RedirectResponse("https://www.linkedin.com/oauth/v2/authorization?" + urlencode(params), status_code=302)
 
@@ -1042,8 +1097,8 @@ def linkedin_callback(request: Request, code: str = "", state: str = "", error: 
         return RedirectResponse("/settings?notice=" + requests.utils.quote("LinkedIn authorization error: " + error), status_code=303)
     if not code or not state:
         return RedirectResponse("/settings?notice=LinkedIn+did+not+return+an+authorization+code+and+state.+Restart+Connect+LinkedIn.", status_code=303)
-    expected = db_get("oauth_state")
-    if not state or not expected or not secrets.compare_digest(state, expected): raise HTTPException(400, "Invalid OAuth state")
+    expected = db_get("oauth_state_" + state)
+    if not state or expected != "pending": raise HTTPException(400, "Invalid or expired OAuth state")
     data = {"grant_type":"authorization_code", "code":code, "redirect_uri":linkedin_redirect_uri(request), "client_id":os.getenv("LINKEDIN_CLIENT_ID", ""), "client_secret":os.getenv("LINKEDIN_CLIENT_SECRET", "")}
     token_response = requests.post("https://www.linkedin.com/oauth/v2/accessToken", data=data, timeout=30)
     if token_response.status_code != 200: return RedirectResponse("/settings?notice=" + requests.utils.quote("Token exchange failed: " + token_response.text[:200]), status_code=303)
@@ -1052,15 +1107,27 @@ def linkedin_callback(request: Request, code: str = "", state: str = "", error: 
     if profile_response.status_code != 200: return RedirectResponse("/settings?notice=" + requests.utils.quote("Could not retrieve LinkedIn member identity: " + profile_response.text[:200]), status_code=303)
     profile = profile_response.json(); sub = str(profile.get("sub", ""))
     if not sub: return RedirectResponse("/settings?notice=LinkedIn+did+not+return+a+member+ID", status_code=303)
-    try: set_token(token)
+    display_name = " ".join(part for part in [profile.get("given_name", ""), profile.get("family_name", "")] if part).strip() or profile.get("name", "LinkedIn member")
+    try: save_linkedin_account(token, sub, display_name)
     except Exception as exc: return RedirectResponse("/settings?notice=" + requests.utils.quote(str(exc)), status_code=303)
-    db_set("linkedin_person_id", sub); db_set("oauth_state", "")
-    return RedirectResponse("/settings?notice=LinkedIn+connected+successfully", status_code=303)
+    db_set("oauth_state_" + state, "")
+    return RedirectResponse("/settings?notice=" + requests.utils.quote(f"Connected {display_name} successfully. Total accounts: {len(get_linkedin_accounts())}"), status_code=303)
+
+@app.post("/settings/accounts/{account_id}/disconnect")
+def disconnect_account(account_id: int):
+    with SessionLocal() as db:
+        account = db.get(LinkedInAccount, account_id)
+        if account:
+            db.delete(account)
+            db.commit()
+    return RedirectResponse("/settings?notice=Selected+LinkedIn+account+disconnected", status_code=303)
 
 @app.post("/settings/disconnect")
-def disconnect():
-    db_set("linkedin_token", ""); db_set("linkedin_person_id", "")
-    return RedirectResponse("/settings?notice=LinkedIn+disconnected", status_code=303)
+def disconnect_all():
+    with SessionLocal() as db:
+        db.query(LinkedInAccount).delete()
+        db.commit()
+    return RedirectResponse("/settings?notice=All+LinkedIn+accounts+disconnected", status_code=303)
 
 @app.get("/health")
 def health(): return {"ok":True,"app":APP_NAME,"time":datetime.now(timezone.utc).isoformat()}
