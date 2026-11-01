@@ -1,4 +1,5 @@
 import os, json, secrets, hashlib, base64
+import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 from datetime import datetime, timedelta
@@ -338,16 +339,18 @@ def decrypt_account_token(account):
     return secret_box().decrypt(account.encrypted_token.encode()).decode()
 
 def normalize_linkedin_bullets(value):
-    """Convert Markdown list markers to real Unicode bullets for LinkedIn text posts."""
+    """Convert Markdown lists into clean LinkedIn text."""
     lines = []
+
     for line in (value or "").splitlines():
-        match = re.match(r"^(\s*)(?:[-*+]\s+)(.+)$", line)
-        if match:
-            line = f"{match.group(1)}• {match.group(2)}"
-        # LinkedIn receives plain text: remove Markdown bold/italic markers.
-        line = re.sub(r"\*\*(.*?)\*\*", r"\1", line)
-        line = re.sub(r"(?<!\w)\*([^*\n]+)\*(?!\w)", r"\1", line)
+        # Convert -, * or + list markers into actual Unicode bullets
+        line = re.sub(r"^(\s*)[-*+]\s+", r"\1• ", line)
+
+        # Remove Markdown bold markers
+        line = line.replace("**", "")
+
         lines.append(line.rstrip())
+
     return "\n".join(lines).strip()
 
 def fingerprint(url, title):
