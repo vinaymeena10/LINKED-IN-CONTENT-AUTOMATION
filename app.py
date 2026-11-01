@@ -189,10 +189,135 @@ class LinkedInAccount(Base):
     encrypted_token = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+class JobListing(Base):
+    __tablename__ = "job_listings"
+    id = Column(Integer, primary_key=True)
+    external_id = Column(String(500), unique=True, nullable=False, index=True)
+    company = Column(String(300), nullable=False)
+    title = Column(String(500), nullable=False)
+    location = Column(String(300), default="")
+    workplace_type = Column(String(100), default="")
+    employment_type = Column(String(100), default="")
+    domain = Column(String(150), default="")
+    description = Column(Text, default="")
+    apply_url = Column(String(1500), nullable=False)
+    source = Column(String(100), default="")
+    posted_at = Column(String(100), default="")
+    discovered_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Setting(Base):
     __tablename__ = "settings"
     key = Column(String(100), primary_key=True)
     value = Column(Text, nullable=False)
+
+
+# Public job-board integrations. These are live public endpoints; coverage depends
+# on whether a company publishes jobs through one of these ATS platforms.
+JOB_DOMAINS = {
+    "Branding & Brand Strategy": ["brand strategist", "brand manager", "brand strategy", "brand marketing"],
+    "Social Media": ["social media manager", "social media executive", "social media strategist", "community manager", "influencer marketing"],
+    "Content & Creative": ["content strategist", "content marketing", "content writer", "creative strategist", "copywriter", "content creator"],
+    "Digital Marketing & Growth": ["digital marketing", "performance marketing", "seo", "sem", "ppc", "growth marketing", "paid media", "email marketing"],
+    "Advertising & Communications": ["advertising", "media planner", "campaign manager", "public relations", "communications manager"],
+    "Design": ["ui designer", "ux designer", "graphic designer", "product designer", "visual designer"],
+    "Technology & IT": ["software engineer", "developer", "it", "technology"],
+    "Data Science & AI": ["data scientist", "machine learning", "artificial intelligence", "data analyst"],
+    "Finance": ["finance", "accountant", "investment", "financial analyst"],
+    "Sales & Business Development": ["sales", "business development", "account executive"],
+    "Human Resources": ["human resources", "recruiter", "talent acquisition"],
+    "Product Management": ["product manager", "product owner"],
+    "Operations & Supply Chain": ["operations", "supply chain", "procurement", "logistics"],
+    "Aviation & Travel": ["aviation", "airline", "airport", "travel"],
+    "Healthcare & Pharma": ["healthcare", "pharma", "clinical"],
+    "Consulting & Strategy": ["consultant", "strategy", "business analyst"],
+    "Hospitality & Retail": ["hospitality", "hotel", "retail", "store manager"],
+    "Education & Research": ["teacher", "education", "researcher", "academic"],
+    "Legal & Compliance": ["legal", "compliance", "lawyer"],
+    "Other / Custom": [],
+}
+
+# Format: company name | ATS provider | board slug
+# Add companies through the Job Search page. Slugs are the public board identifiers.
+DEFAULT_JOB_COMPANIES = [
+    ("Airbnb", "ashby", "airbnb"),
+    ("Notion", "ashby", "notion"),
+    ("Ramp", "ashby", "ramp"),
+    ("Canva", "greenhouse", "canva"),
+    ("Figma", "greenhouse", "figma"),
+    ("Stripe", "greenhouse", "stripe"),
+    ("Databricks", "greenhouse", "databricks"),
+    ("Duolingo", "greenhouse", "duolingo"),
+    ("Coinbase", "greenhouse", "coinbase"),
+    ("Rippling", "greenhouse", "rippling"),
+    ("Lever Demo", "lever", "lever"),
+]
+
+def get_job_companies():
+    raw = db_get("job_companies", "")
+    companies = []
+    if raw:
+        try:
+            for row in json.loads(raw):
+                if isinstance(row, dict) and row.get("name") and row.get("provider") and row.get("slug"):
+                    companies.append(row)
+        except (TypeError, ValueError):
+            pass
+    if not companies:
+        companies = [{"name": n, "provider": p, "slug": s} for n, p, s in DEFAULT_JOB_COMPANIES]
+    return companies
+
+def fetch_company_jobs(company):
+    name, provider, slug = company["name"], company["provider"].lower(), company["slug"].strip()
+    headers = {"User-Agent": "LinkedInContentStudio/1.0 (public job listing discovery)"}
+    jobs = []
+    if provider == "greenhouse":
+        url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true"
+        response = requests.get(url, headers=headers, timeout=20)
+        response.raise_for_status()
+        for item in response.json().get("jobs", []):
+            jobs.append({
+                "external_id": f"greenhouse:{slug}:{item.get('id')}",
+                "company": name, "title": item.get("title", ""),
+                "location": (item.get("location") or {}).get("name", ""),
+                "description": re.sub(r"<[^>]+>", " ", item.get("content", "") or "")[:6000],
+                "apply_url": item.get("absolute_url", ""), "source": "Greenhouse",
+                "posted_at": item.get("updated_at", ""),
+            })
+    elif provider == "lever":
+        url = f"https://api.lever.co/v0/postings/{slug}?mode=json"
+        response = requests.get(url, headers=headers, timeout=20)
+        response.raise_for_status()
+        for item in response.json():
+            categories = item.get("categories") or {}
+            jobs.append({
+                "external_id": f"lever:{slug}:{item.get('id')}",
+                "company": name, "title": item.get("text", ""),
+                "location": categories.get("location", ""),
+                "workplace_type": categories.get("commitment", ""),
+                "description": re.sub(r"<[^>]+>", " ", (item.get("descriptionPlain") or ""))[:6000],
+                "apply_url": item.get("hostedUrl") or item.get("applyUrl") or "",
+                "source": "Lever", "posted_at": item.get("createdAt", ""),
+            })
+    elif provider == "ashby":
+        url = f"https://api.ashbyhq.com/posting-api/job-board/{slug}?includeCompensation=true"
+        response = requests.get(url, headers=headers, timeout=20)
+        response.raise_for_status()
+        for item in response.json().get("jobs", []):
+            jobs.append({
+                "external_id": f"ashby:{slug}:{item.get('id')}",
+                "company": name, "title": item.get("title", ""),
+                "location": item.get("location", ""),
+                "workplace_type": item.get("workplaceType", ""),
+                "employment_type": item.get("employmentType", ""),
+                "description": re.sub(r"<[^>]+>", " ", item.get("descriptionPlain", "") or "")[:6000],
+                "apply_url": item.get("jobUrl") or item.get("applyUrl") or "",
+                "source": "Ashby", "posted_at": item.get("publishedAt", ""),
+            })
+    else:
+        raise ValueError("Provider must be greenhouse, lever, or ashby.")
+    return [j for j in jobs if j.get("title") and j.get("apply_url")]
+
 
 Base.metadata.create_all(engine)
 app = FastAPI(title=APP_NAME)
@@ -339,18 +464,16 @@ def decrypt_account_token(account):
     return secret_box().decrypt(account.encrypted_token.encode()).decode()
 
 def normalize_linkedin_bullets(value):
-    """Convert Markdown lists into clean LinkedIn text."""
+    """Convert Markdown list markers to real Unicode bullets for LinkedIn text posts."""
     lines = []
-
     for line in (value or "").splitlines():
-        # Convert -, * or + list markers into actual Unicode bullets
-        line = re.sub(r"^(\s*)[-*+]\s+", r"\1• ", line)
-
-        # Remove Markdown bold markers
-        line = line.replace("**", "")
-
+        match = re.match(r"^(\s*)(?:[-*+]\s+)(.+)$", line)
+        if match:
+            line = f"{match.group(1)}• {match.group(2)}"
+        # LinkedIn receives plain text: remove Markdown bold/italic markers.
+        line = re.sub(r"\*\*(.*?)\*\*", r"\1", line)
+        line = re.sub(r"(?<!\w)\*([^*\n]+)\*(?!\w)", r"\1", line)
         lines.append(line.rstrip())
-
     return "\n".join(lines).strip()
 
 def fingerprint(url, title):
@@ -1131,6 +1254,126 @@ def disconnect_all():
         db.query(LinkedInAccount).delete()
         db.commit()
     return RedirectResponse("/settings?notice=All+LinkedIn+accounts+disconnected", status_code=303)
+
+
+@app.get("/jobs", response_class=HTMLResponse)
+def jobs_page(request: Request, notice: str = ""):
+    with SessionLocal() as db:
+        listings = db.query(JobListing).order_by(desc(JobListing.discovered_at)).limit(300).all()
+    return templates.TemplateResponse(
+        request=request, name="jobs.html",
+        context={"request": request, "notice": notice, "jobs": listings,
+                 "domains": list(JOB_DOMAINS.keys()), "companies": get_job_companies()}
+    )
+
+@app.post("/jobs/companies/save")
+def save_job_companies(companies_text: str = Form("")):
+    companies = []
+    for raw_line in companies_text.splitlines():
+        parts = [p.strip() for p in raw_line.split("|")]
+        if len(parts) == 3 and all(parts):
+            name, provider, slug = parts
+            provider = provider.lower()
+            if provider in {"greenhouse", "lever", "ashby"}:
+                companies.append({"name": name[:300], "provider": provider, "slug": slug[:200]})
+    if not companies:
+        return RedirectResponse("/jobs?notice=Add+at+least+one+valid+company+entry", status_code=303)
+    db_set("job_companies", json.dumps(companies))
+    return RedirectResponse(f"/jobs?notice=Saved+{len(companies)}+company+sources", status_code=303)
+
+@app.post("/jobs/search")
+def search_jobs(
+    domains: list[str] = Form([]),
+    custom_domain: str = Form(""),
+    keywords: str = Form(""),
+    location: str = Form("India"),
+    experience: str = Form("All experience levels"),
+):
+    valid_domains = [d for d in domains if d in JOB_DOMAINS]
+    custom_domain = custom_domain.strip()[:100]
+    terms = []
+    for domain in valid_domains:
+        terms.extend(JOB_DOMAINS[domain])
+    if custom_domain:
+        terms.append(custom_domain.lower())
+    if keywords.strip():
+        terms.extend([x.strip().lower() for x in keywords.split(",") if x.strip()])
+    terms = list(dict.fromkeys(terms))
+    companies = get_job_companies()
+    found_count = 0
+    errors = []
+    with SessionLocal() as db:
+        for company in companies:
+            try:
+                for item in fetch_company_jobs(company):
+                    haystack = (item["title"] + " " + item["description"]).lower()
+                    if terms and not any(term in haystack for term in terms):
+                        continue
+                    if location.strip() and location.strip().lower() not in {"anywhere", "all"}:
+                        loc = (item["location"] + " " + item.get("workplace_type", "")).lower()
+                        wanted = location.strip().lower()
+                        if wanted not in loc and "remote" not in loc and wanted not in {"india", "worldwide"}:
+                            continue
+                    existing = db.query(JobListing).filter_by(external_id=item["external_id"]).first()
+                    if existing:
+                        existing.title = item["title"]
+                        existing.location = item["location"]
+                        existing.description = item["description"]
+                        existing.apply_url = item["apply_url"]
+                        existing.posted_at = item["posted_at"]
+                        continue
+                    db.add(JobListing(
+                        external_id=item["external_id"], company=item["company"],
+                        title=item["title"], location=item["location"],
+                        workplace_type=item.get("workplace_type", ""),
+                        employment_type=item.get("employment_type", ""),
+                        domain=", ".join(valid_domains) or custom_domain or "All domains",
+                        description=item["description"], apply_url=item["apply_url"],
+                        source=item["source"], posted_at=str(item["posted_at"] or "")
+                    ))
+                    found_count += 1
+            except Exception as exc:
+                errors.append(f'{company["name"]}: {str(exc)[:120]}')
+        db.commit()
+    message = f"Search complete: {found_count} new matching jobs found."
+    if errors:
+        message += f" {len(errors)} company source(s) could not be checked."
+    return RedirectResponse("/jobs?notice=" + requests.utils.quote(message), status_code=303)
+
+@app.post("/jobs/{job_id}/generate")
+def generate_job_post(job_id: int):
+    with SessionLocal() as db:
+        job = db.get(JobListing, job_id)
+        if not job:
+            raise HTTPException(404, "Job listing not found")
+        item = {
+            "category": "careers", "topic": "tech_careers",
+            "title": f'{job.title} — {job.company}',
+            "source_name": f'{job.company} careers ({job.source})',
+            "url": job.apply_url,
+            "published": job.posted_at or "",
+            "summary": (
+                f'Job title: {job.title}. Company: {job.company}. '
+                f'Location: {job.location}. Workplace: {job.workplace_type}. '
+                f'Employment: {job.employment_type}. Job description: {job.description[:3500]}. '
+                f'Application link: {job.apply_url}. '
+                'Create a factual job opportunity announcement. Preserve the exact application URL.'
+            )
+        }
+        draft = create_draft(item)
+        fp = fingerprint(job.apply_url, job.title)
+        existing_post = db.query(Post).filter_by(fingerprint=fp).first()
+        if existing_post:
+            return RedirectResponse("/?notice=This+job+already+has+a+post", status_code=303)
+        db.add(Post(
+            category="careers", topic="tech_careers", title=item["title"][:500],
+            source_url=job.apply_url, source_name=item["source_name"],
+            source_published=job.posted_at or "", draft=draft,
+            status="pending", fingerprint=fp
+        ))
+        db.commit()
+    return RedirectResponse("/?notice=Job+post+generated+in+Drafts", status_code=303)
+
 
 @app.get("/health")
 def health(): return {"ok":True,"app":APP_NAME,"time":datetime.now(timezone.utc).isoformat()}
