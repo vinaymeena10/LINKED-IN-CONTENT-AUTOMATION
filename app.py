@@ -14,6 +14,8 @@ from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from google import genai
+from groq import Groq
+from cerebras.cloud.sdk import Cerebras
 from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, desc
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy import (
@@ -424,26 +426,99 @@ Source snippet: {item['summary']}
 Write the post now.
 """
 
-    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    # Try each configured provider in order. A provider is skipped when its
+    # API key is absent. Quota, transient server, and connection errors fall
+    # through to the next provider.
+    failures = []
 
-    if not api_key:
-        raise RuntimeError(
-            "GEMINI_API_KEY is missing. Check your .env configuration."
+    def is_retryable_provider_error(exc):
+        status = getattr(exc, "status_code", None)
+        if status is None:
+            response = getattr(exc, "response", None)
+            status = getattr(response, "status_code", None)
+        if status in (408, 409, 425, 429) or (status is not None and status >= 500):
+            return True
+
+        message = str(exc).lower()
+        retry_terms = (
+            "rate limit", "rate_limit", "quota", "resource_exhausted",
+            "too many requests", "temporarily unavailable", "timeout",
+            "timed out", "connection", "overloaded", "server error",
         )
+        return any(term in message for term in retry_terms)
 
-    model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+    # 1) Gemini (primary)
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if gemini_key:
+        try:
+            model = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+            with genai.Client(api_key=gemini_key) as client:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                )
+            draft = (response.text or "").strip()
+            if draft:
+                print(f"Draft generated with Gemini ({model})")
+                return draft
+            raise RuntimeError("Gemini returned an empty draft.")
+        except Exception as exc:
+            failures.append(f"Gemini: {exc}")
+            print(f"Gemini generation failed; trying next provider: {exc}")
+    else:
+        failures.append("Gemini: GEMINI_API_KEY is not configured")
 
-    with genai.Client(api_key=api_key) as client:
-        response = client.models.generate_content(
-            model=model,
-            contents=prompt,
-        )
-        draft = (response.text or "").strip()
+    # 2) Groq (first fallback)
+    groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    if groq_key:
+        try:
+            model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+            client = Groq(api_key=groq_key)
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=1200,
+            )
+            draft = (response.choices[0].message.content or "").strip()
+            if draft:
+                print(f"Draft generated with Groq ({model})")
+                return draft
+            raise RuntimeError("Groq returned an empty draft.")
+        except Exception as exc:
+            failures.append(f"Groq: {exc}")
+            print(f"Groq generation failed; trying next provider: {exc}")
+    else:
+        failures.append("Groq: GROQ_API_KEY is not configured")
 
-    if not draft:
-        raise RuntimeError("Gemini returned an empty draft.")
+    # 3) Cerebras (second fallback)
+    cerebras_key = os.getenv("CEREBRAS_API_KEY", "").strip()
+    if cerebras_key:
+        try:
+            model = os.getenv("CEREBRAS_MODEL", "qwen-3-235b-a22b-instruct")
+            client = Cerebras(api_key=cerebras_key)
+            response = client.chat.completions.create(
+                messages=[{"role": "user", "content": prompt}],
+                model=model,
+                max_completion_tokens=1200,
+                temperature=0.7,
+                top_p=1,
+                stream=False,
+            )
+            draft = (response.choices[0].message.content or "").strip()
+            if draft:
+                print(f"Draft generated with Cerebras ({model})")
+                return draft
+            raise RuntimeError("Cerebras returned an empty draft.")
+        except Exception as exc:
+            failures.append(f"Cerebras: {exc}")
+            print(f"Cerebras generation failed: {exc}")
+    else:
+        failures.append("Cerebras: CEREBRAS_API_KEY is not configured")
 
-    return draft
+    raise RuntimeError(
+        "All configured AI providers failed. " + " | ".join(failures)
+    )
 
 
 def freshness_score(item):
