@@ -622,7 +622,7 @@ conclusion. It should feel authored, not assembled from a template.
     cerebras_key = os.getenv("CEREBRAS_API_KEY", "").strip()
     if cerebras_key:
         try:
-            model = os.getenv("CEREBRAS_MODEL", "qwen-3-235b-a22b-instruct")
+            model = os.getenv("CEREBRAS_MODEL", "qwen-3.8-27b")
             client = Cerebras(api_key=cerebras_key)
             response = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
