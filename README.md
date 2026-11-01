@@ -2,15 +2,11 @@
 
 A separate Python web app for researching public RSS content, generating original LinkedIn drafts with Google Gemini, reviewing/editing drafts, and publishing only after a human explicitly approves them.
 
-## Content allocation
+## Topic-based content preferences
 
-- 30% data science, machine learning, neural networks and NLP
-- 30% AI research, LLMs and AI tools
-- 20% cloud, automation and data engineering
-- 15% technology careers and job openings
-- 5% marketing and brand trends
+Choose one or more topics on the dashboard before generating drafts. Preferences are saved in the database and control which research feeds are queried. Available topics include Data Science, Machine Learning, Deep Learning, Neural Networks, NLP, Artificial Intelligence, Agentic AI, LLMs, AI Research & Tools, Startup Decoding, Business & Industry Decoding, Branding & Marketing, Cloud & Automation, and Technology Careers.
 
-The quota is a rolling target over time. A small number of items may not match exact percentages because source availability varies.
+The app keeps the existing human-review workflow: drafts are not published unless the operator explicitly approves and publishes them.
 
 ## Run locally
 
@@ -20,7 +16,7 @@ Requires Python 3.11+ (3.12 recommended).
 python -m venv .venv
 # Windows PowerShell: .venv\Scripts\Activate.ps1
 # macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r L_requirements.txt
 copy .env.example .env  # Windows; on macOS/Linux use cp .env.example .env
 ```
 
@@ -42,7 +38,7 @@ Open http://localhost:8080. The scheduled task creates drafts at 08:00 Asia/Kolk
 ## LinkedIn setup
 
 1. Create a LinkedIn developer app and request the product/permission needed to share posts on behalf of a member. `w_member_social` is the typical member posting permission; access depends on LinkedIn's app approval and current program requirements.
-2. Register the exact callback URL, locally `http://localhost:8080/auth/linkedin/callback`, and in production the HTTPS URL for your domain.
+2. Register the exact callback URL, locally `http://localhost:8080/auth/linkedin/callback`, and in production the HTTPS URL for your Render service, ending in `/auth/linkedin/callback`. The callback URL in the LinkedIn Developer Portal must exactly match `LINKEDIN_REDIRECT_URI`.
 3. Set `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, and `LINKEDIN_REDIRECT_URI` as environment variables.
 4. In Settings, click Connect LinkedIn and approve the requested permissions.
 5. Test by creating a draft, reviewing its source, editing it, clicking Approve, and only then clicking Publish to LinkedIn.
@@ -68,3 +64,10 @@ Job posts from news/search feeds are not verified vacancies. Verify role, locati
 - A cloud deployment needs HTTPS, a persistent database, secrets management, and dashboard authentication.
 - OAuth token refresh/expiry handling should be added based on the actual LinkedIn app/token policy before long-running production use.
 - The initial quota algorithm uses category targets over a rolling queue; exact long-term quotas depend on source availability.
+
+
+## Render deployment
+
+This repository includes a Dockerfile that installs `L_requirements.txt`. In Render, create a Web Service connected to this GitHub repository and use Docker as the runtime. Add these environment variables in Render's Environment page: `GEMINI_API_KEY`, `GEMINI_MODEL`, `APP_ENCRYPTION_KEY`, `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_REDIRECT_URI`, `LINKEDIN_API_VERSION`, `DATABASE_URL`, `ENABLE_SCHEDULER`, `SCHEDULE_HOUR`, `SCHEDULE_MINUTE`, and `APP_TIMEZONE`. Set `LINKEDIN_REDIRECT_URI` to `https://YOUR-SERVICE.onrender.com/auth/linkedin/callback` and register that exact URL in LinkedIn Developer Portal.
+
+The included SQLite default is for local testing only. Render's ephemeral filesystem is not durable; use managed PostgreSQL and set `DATABASE_URL` before relying on saved drafts or LinkedIn tokens. Add dashboard authentication before sharing the service publicly.

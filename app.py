@@ -62,10 +62,72 @@ DISPLAY_CATEGORIES = {
     },
 }
 
+# User-selectable research topics. Each topic maps to a broad category for
+# backwards compatibility with existing posts and dashboard statistics.
+TOPICS = {
+    "data_science": {"label": "Data Science", "category": "data_science", "query": '"data science" OR analytics OR statistics'},
+    "machine_learning": {"label": "Machine Learning", "category": "data_science", "query": '"machine learning" OR "predictive modeling"'},
+    "deep_learning": {"label": "Deep Learning", "category": "data_science", "query": '"deep learning" OR "representation learning"'},
+    "neural_networks": {"label": "Neural Networks", "category": "data_science", "query": '"neural networks" OR transformers'},
+    "nlp": {"label": "NLP", "category": "data_science", "query": '"natural language processing" OR NLP'},
+    "artificial_intelligence": {"label": "Artificial Intelligence", "category": "ai_research", "query": '"artificial intelligence" OR AI research'},
+    "agentic_ai": {"label": "Agentic AI", "category": "ai_research", "query": '"agentic AI" OR "AI agents" OR "multi-agent"'},
+    "llms": {"label": "LLMs & Generative AI", "category": "ai_research", "query": 'LLM OR "large language model" OR "generative AI"'},
+    "ai_research": {"label": "AI Research & Tools", "category": "ai_research", "query": 'AI research OR "AI tools" OR "foundation models"'},
+    "startup_decoding": {"label": "Startup Decoding", "category": "business_decoding", "query": 'startup OR founder OR "business model"'},
+    "business_strategy": {"label": "Business & Industry Decoding", "category": "business_decoding", "query": '"unit economics" OR strategy OR "industry analysis" OR operations'},
+    "branding_marketing": {"label": "Branding & Marketing", "category": "marketing", "query": 'branding OR marketing OR advertising OR "consumer behaviour"'},
+    "cloud_automation": {"label": "Cloud & Automation", "category": "cloud_automation", "query": 'cloud computing OR automation OR MLOps OR data engineering'},
+    "tech_careers": {"label": "Technology Careers", "category": "careers", "query": '"data scientist jobs" OR "AI engineer jobs" OR tech hiring'},
+}
+DEFAULT_SELECTED_TOPICS = list(TOPICS.keys())
+
+
+def get_selected_topics():
+    raw = db_get("selected_topics", "")
+    if not raw:
+        return DEFAULT_SELECTED_TOPICS.copy()
+    try:
+        selected = json.loads(raw)
+        valid = [topic for topic in selected if topic in TOPICS]
+        return valid or DEFAULT_SELECTED_TOPICS.copy()
+    except (TypeError, ValueError):
+        return DEFAULT_SELECTED_TOPICS.copy()
+
+
+def build_topic_feeds(selected_topics=None):
+    selected_topics = selected_topics or get_selected_topics()
+    feeds = []
+    for topic_key in selected_topics:
+        topic = TOPICS.get(topic_key)
+        if not topic:
+            continue
+        query = topic["query"].replace(" ", "+")
+        url = (
+            "https://news.google.com/rss/search?q=" + query
+            + "&hl=en-IN&gl=IN&ceid=IN:en"
+        )
+        feeds.append({
+            "category": topic["category"],
+            "topic": topic_key,
+            "name": "Google News · " + topic["label"],
+            "url": url,
+        })
+    # Add specialist research feeds when their topic families are selected.
+    if any(t in selected_topics for t in ("machine_learning", "deep_learning", "neural_networks")):
+        feeds.append({"category": "data_science", "topic": "machine_learning", "name": "arXiv Machine Learning", "url": "https://rss.arxiv.org/rss/cs.LG"})
+    if "nlp" in selected_topics:
+        feeds.append({"category": "data_science", "topic": "nlp", "name": "arXiv NLP", "url": "https://rss.arxiv.org/rss/cs.CL"})
+    if any(t in selected_topics for t in ("artificial_intelligence", "agentic_ai", "ai_research", "llms")):
+        feeds.append({"category": "ai_research", "topic": "ai_research", "name": "arXiv AI", "url": "https://rss.arxiv.org/rss/cs.AI"})
+        feeds.append({"category": "ai_research", "topic": "ai_research", "name": "Google AI Blog", "url": "https://blog.research.google/feeds/posts/default"})
+    return feeds
+
 class Post(Base):
     __tablename__ = "posts"
     id = Column(Integer, primary_key=True)
     category = Column(String(40), nullable=False, index=True)
+    topic = Column(String(60), nullable=True, index=True)
     planned_date = Column(String(10), nullable=True)
     title = Column(String(500), nullable=False)
     source_url = Column(String(1500), nullable=False)
@@ -100,6 +162,10 @@ with engine.begin() as connection:
     if "planned_date" not in columns:
         connection.execute(
             text("ALTER TABLE posts ADD COLUMN planned_date VARCHAR(10)")
+        )
+    if "topic" not in columns:
+        connection.execute(
+            text("ALTER TABLE posts ADD COLUMN topic VARCHAR(60)")
         )
 
 # Public feeds: configure/extend FEEDS_JSON for trusted sources. Search queries are discovery leads, not proof of a claim.
@@ -160,13 +226,9 @@ DEFAULT_FEEDS = [
 ]
 
 def get_feeds():
-    raw = os.getenv("FEEDS_JSON", "").strip()
-    if not raw: return DEFAULT_FEEDS
-    try:
-        parsed = json.loads(raw)
-        return [x for x in parsed if x.get("category") in CATEGORIES and x.get("url") and x.get("name")]
-    except Exception:
-        return DEFAULT_FEEDS
+    # Research only the topics currently selected in the dashboard.
+    return build_topic_feeds(get_selected_topics())
+
 
 def secret_box():
     key = os.getenv("APP_ENCRYPTION_KEY", "").strip()
@@ -281,6 +343,7 @@ def discover_items():
 
                 found.append({
                     "category": feed["category"],
+                    "topic": feed.get("topic", ""),
                     "source_name": feed["name"],
                     "url": url,
                     "title": title,
@@ -300,7 +363,8 @@ def discover_items():
 
 
 def create_draft(item):
-    category = CATEGORIES[item["category"]]["label"]
+    category = CATEGORIES.get(item["category"], DISPLAY_CATEGORIES.get(item["category"], {"label": item["category"]}))["label"]
+    topic_name = TOPICS.get(item.get("topic", ""), {"label": category})["label"]
 
     business_instructions = ""
 
@@ -348,7 +412,9 @@ GENERAL RULES:
 - Put the source URL on the final line.
 - Return only the post text.
 
-Category: {category}
+Broad category: {category}
+Selected topic: {topic_name}
+Make the post specifically relevant to the selected topic, not just the broad category.
 Source title: {item['title']}
 Publisher/feed: {item['source_name']}
 Source URL: {item['url']}
@@ -555,6 +621,7 @@ def run_research_cycle(max_drafts=5):
 
                 db.add(Post(
                     category=category,
+                    topic=item.get("topic", ""),
                     title=item["title"][:500],
                     source_url=item["url"],
                     source_name=feed_name,
@@ -636,6 +703,8 @@ def dashboard(request: Request, notice: str = ""):
             "posts": posts,
             "stats": stats,
             "categories": DISPLAY_CATEGORIES,
+            "topics": TOPICS,
+            "selected_topics": get_selected_topics(),
             "notice": notice,
             "planned_posts": planned_posts,
             "connected": bool(get_token()),
@@ -644,10 +713,26 @@ def dashboard(request: Request, notice: str = ""):
 
 
 @app.post("/generate")
-def generate_now():
-    try: n = run_research_cycle(max_drafts=5); msg = f"Created {n} new draft(s)."
-    except Exception as exc: msg = f"Generation failed: {exc}"
+def generate_now(selected_topics: list[str] = Form([])):
+    valid_topics = [topic for topic in selected_topics if topic in TOPICS]
+    if not valid_topics:
+        return RedirectResponse(url="/?notice=Select+at+least+one+topic+first", status_code=303)
+    db_set("selected_topics", json.dumps(valid_topics))
+    try:
+        n = run_research_cycle(max_drafts=5)
+        msg = f"Created {n} draft(s) from your {len(valid_topics)} selected topic(s)."
+    except Exception as exc:
+        msg = f"Generation failed: {exc}"
     return RedirectResponse(url="/?notice=" + requests.utils.quote(msg), status_code=303)
+
+
+@app.post("/topics/save")
+def save_topics(selected_topics: list[str] = Form([])):
+    valid_topics = [topic for topic in selected_topics if topic in TOPICS]
+    if not valid_topics:
+        return RedirectResponse(url="/?notice=Select+at+least+one+topic+to+save", status_code=303)
+    db_set("selected_topics", json.dumps(valid_topics))
+    return RedirectResponse(url="/?notice=Content+preferences+saved", status_code=303)
 
 @app.post("/planner/build")
 def build_daily_plan():
@@ -755,6 +840,15 @@ def reject(post_id: int):
         post.status = "rejected"; db.commit()
     return RedirectResponse(url="/?notice=Post+rejected", status_code=303)
 
+def linkedin_redirect_uri(request: Request | None = None) -> str:
+    configured = os.getenv("LINKEDIN_REDIRECT_URI", "").strip()
+    if configured:
+        return configured
+    if request is not None:
+        return str(request.base_url).rstrip("/") + "/auth/linkedin/callback"
+    return "http://localhost:8080/auth/linkedin/callback"
+
+
 @app.get("/settings", response_class=HTMLResponse)
 def settings(request: Request, notice: str = ""):
     return templates.TemplateResponse(
@@ -765,28 +859,28 @@ def settings(request: Request, notice: str = ""):
         "connected": bool(get_token()),
         
         "notice": notice,
-        "redirect_uri": os.getenv(
-            "LINKEDIN_REDIRECT_URI",
-            "http://localhost:8080/auth/linkedin/callback"
-        ),
+        "redirect_uri": linkedin_redirect_uri(request),
     },
 )
 
 @app.get("/auth/linkedin/start")
-def linkedin_start():
+def linkedin_start(request: Request):
     client_id = os.getenv("LINKEDIN_CLIENT_ID", "")
-    redirect_uri = os.getenv("LINKEDIN_REDIRECT_URI", "")
+    redirect_uri = linkedin_redirect_uri(request)
     if not client_id or not redirect_uri: return RedirectResponse("/settings?notice=Set+LINKEDIN_CLIENT_ID+and+LINKEDIN_REDIRECT_URI+first", status_code=303)
     state = secrets.token_urlsafe(24); db_set("oauth_state", state)
     params = {"response_type":"code", "client_id":client_id, "redirect_uri":redirect_uri, "state":state, "scope":"openid profile w_member_social"}
     return RedirectResponse("https://www.linkedin.com/oauth/v2/authorization?" + urlencode(params), status_code=302)
 
 @app.get("/auth/linkedin/callback")
-def linkedin_callback(code: str = "", state: str = "", error: str = ""):
-    if error: return RedirectResponse("/settings?notice=" + requests.utils.quote("LinkedIn authorization error: " + error), status_code=303)
+def linkedin_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+    if error:
+        return RedirectResponse("/settings?notice=" + requests.utils.quote("LinkedIn authorization error: " + error), status_code=303)
+    if not code or not state:
+        return RedirectResponse("/settings?notice=LinkedIn+did+not+return+an+authorization+code+and+state.+Restart+Connect+LinkedIn.", status_code=303)
     expected = db_get("oauth_state")
     if not state or not expected or not secrets.compare_digest(state, expected): raise HTTPException(400, "Invalid OAuth state")
-    data = {"grant_type":"authorization_code", "code":code, "redirect_uri":os.getenv("LINKEDIN_REDIRECT_URI", ""), "client_id":os.getenv("LINKEDIN_CLIENT_ID", ""), "client_secret":os.getenv("LINKEDIN_CLIENT_SECRET", "")}
+    data = {"grant_type":"authorization_code", "code":code, "redirect_uri":linkedin_redirect_uri(request), "client_id":os.getenv("LINKEDIN_CLIENT_ID", ""), "client_secret":os.getenv("LINKEDIN_CLIENT_SECRET", "")}
     token_response = requests.post("https://www.linkedin.com/oauth/v2/accessToken", data=data, timeout=30)
     if token_response.status_code != 200: return RedirectResponse("/settings?notice=" + requests.utils.quote("Token exchange failed: " + token_response.text[:200]), status_code=303)
     token = token_response.json().get("access_token", "")
