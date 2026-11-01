@@ -3,27 +3,72 @@
 <style>
 :root{font-family:Inter,Segoe UI,Arial,sans-serif;color:#172033;background:#f5f8fc}*{box-sizing:border-box}body{margin:0}.top{background:#fff;border-bottom:1px solid #dce5f0;padding:22px max(20px,calc((100% - 1120px)/2));display:flex;justify-content:space-between;align-items:center;gap:18px}.brand{font-size:21px;font-weight:800;color:#174ea6}.sub{color:#667085;font-size:13px;margin-top:4px}.wrap{max-width:1120px;margin:26px auto;padding:0 18px}.actions{display:flex;gap:10px;flex-wrap:wrap}button,.btn{border:0;border-radius:9px;background:#175cd3;color:white;padding:10px 14px;font-weight:700;cursor:pointer;text-decoration:none;font-size:13px}.secondary{background:white;color:#175cd3;border:1px solid #bfd2f4}.danger{background:#b42318}.notice{background:#eaf2ff;color:#174ea6;border:1px solid #c9dcff;padding:12px 15px;border-radius:10px;margin-bottom:18px}.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:24px}.stat,.card,.panel{background:white;border:1px solid #e0e7f0;border-radius:14px;padding:16px}.stat b{font-size:25px;display:block}.stat span{font-size:12px;color:#667085}.heading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:24px 0 14px}.heading h2{font-size:19px;margin:0}.card{margin-bottom:15px}.meta{font-size:12px;color:#667085;display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}.tag{background:#eef4ff;color:#175cd3;border-radius:20px;padding:4px 9px;font-size:11px;font-weight:700}.card h3{font-size:17px;margin:9px 0}.source{font-size:12px;overflow-wrap:anywhere}.source a{color:#175cd3}.draft{width:100%;min-height:180px;border:1px solid #ccd6e3;border-radius:10px;padding:12px;font:14px/1.55 Inter,Segoe UI,Arial;resize:vertical}.cardfoot{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px}.btnrow{display:flex;gap:8px;flex-wrap:wrap}.status{font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.03em}.error{color:#b42318;font-size:12px;margin-top:8px}.empty{padding:30px;text-align:center;color:#667085;background:white;border:1px dashed #cbd5e1;border-radius:14px}@media(max-width:700px){.stats{grid-template-columns:repeat(2,1fr)}.top{align-items:flex-start;flex-direction:column}}
 </style></head><body>
-<header class="top"><div><div class="brand">LinkedIn Content Studio</div><div class="sub">Research → original draft → your approval → LinkedIn</div></div><div class="actions"><a class="btn secondary" href="/settings">Settings · {% if connected %}LinkedIn connected{% else %}Connect LinkedIn{% endif %}</a><a class="btn" href="#topic-preferences">Choose topics & generate</a></div></header>
+<header class="top"><div><div class="brand">LinkedIn Content Studio</div><div class="sub">Research → original draft → your approval → LinkedIn</div></div><div class="actions"><a class="btn secondary" href="/settings">Settings · {% if connected %}LinkedIn connected{% else %}Connect LinkedIn{% endif %}</a><form action="/generate" method="post"><button>Find content & generate drafts</button></form></div></header>
 <main class="wrap">{% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
 <div class="stats">{% for key,label in [('pending','Needs review'),('approved','Approved'),('published','Published'),('rejected','Rejected'),('failed','Failed')] %}<div class="stat"><b>{{ stats[key] }}</b><span>{{ label }}</span></div>{% endfor %}</div>
-<section class="panel" id="topic-preferences" style="margin-top:16px">
-  <div class="heading"><h2>Content preferences</h2><span class="sub">Choose exactly what the research engine should look for</span></div>
-  <p class="sub">Select one or more topics. The same selection is used when you save preferences or generate drafts.</p>
+<div class="panel"><strong>Content allocation</strong><div class="sub">25% Data science · 25% AI research · 15% Cloud/automation · 15% Careers · 20% Business decoding. Percentages are rolling targets, not guarantees for every small batch.</div></div>
+
+<section class="panel" style="margin-top:16px">
+  <div class="heading"><h2>Generation studio</h2><span class="sub">Choose what to write and how it should sound</span></div>
   <form action="/generate" method="post">
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:14px 0 18px">
+    <h3 style="margin:8px 0">1. Topics to research</h3>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:9px;margin:12px 0 20px">
       {% for key, topic in topics.items() %}
-      <label style="display:flex;align-items:center;gap:9px;border:1px solid #e0e7f0;border-radius:10px;padding:11px 12px;background:#fff;cursor:pointer">
-        <input type="checkbox" name="selected_topics" value="{{ key }}" {% if key in selected_topics %}checked{% endif %} style="width:16px;height:16px;accent-color:#175cd3">
-        <span style="font-size:13px;font-weight:650">{{ topic.label }}</span>
+      <label style="display:flex;gap:8px;align-items:center;border:1px solid #e0e7f0;border-radius:9px;padding:10px;font-size:13px">
+        <input type="checkbox" name="selected_topics" value="{{ key }}" {% if key in selected_topics %}checked{% endif %}>
+        {{ topic.label }}
       </label>
       {% endfor %}
     </div>
-    <div class="actions">
-      <button type="submit">Find content & generate drafts</button>
-      <button class="secondary" type="submit" formaction="/topics/save">Save preferences only</button>
+    <h3 style="margin:8px 0">2. Writing style</h3>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px">
+      <label style="font-size:13px;font-weight:600">Post format
+        <select name="post_format" style="display:block;width:100%;margin-top:6px;padding:10px;border:1px solid #ccd6e3;border-radius:8px">
+          <option value="narrative" {% if writing_preferences.format == 'narrative' %}selected{% endif %}>Narrative paragraphs</option>
+          <option value="points" {% if writing_preferences.format == 'points' %}selected{% endif %}>Bullet points</option>
+          <option value="breakdown" {% if writing_preferences.format == 'breakdown' %}selected{% endif %}>Structured breakdown</option>
+          <option value="hook" {% if writing_preferences.format == 'hook' %}selected{% endif %}>Hook-led post</option>
+          <option value="contrarian" {% if writing_preferences.format == 'contrarian' %}selected{% endif %}>Contrarian perspective</option>
+          <option value="case_study" {% if writing_preferences.format == 'case_study' %}selected{% endif %}>Case study</option>
+        </select>
+      </label>
+      <label style="font-size:13px;font-weight:600">Tone
+        <select name="tone" style="display:block;width:100%;margin-top:6px;padding:10px;border:1px solid #ccd6e3;border-radius:8px">
+          <option value="insightful" {% if writing_preferences.tone == 'insightful' %}selected{% endif %}>Insightful & analytical</option>
+          <option value="conversational" {% if writing_preferences.tone == 'conversational' %}selected{% endif %}>Conversational & human</option>
+          <option value="provocative" {% if writing_preferences.tone == 'provocative' %}selected{% endif %}>Bold & thought-provoking</option>
+          <option value="technical" {% if writing_preferences.tone == 'technical' %}selected{% endif %}>Technical & detailed</option>
+          <option value="storytelling" {% if writing_preferences.tone == 'storytelling' %}selected{% endif %}>Storytelling</option>
+        </select>
+      </label>
+      <label style="font-size:13px;font-weight:600">Author's voice
+        <select name="voice" style="display:block;width:100%;margin-top:6px;padding:10px;border:1px solid #ccd6e3;border-radius:8px">
+          <option value="first_person" {% if writing_preferences.voice == 'first_person' %}selected{% endif %}>Personal point of view (I / my)</option>
+          <option value="professional" {% if writing_preferences.voice == 'professional' %}selected{% endif %}>Professional commentator</option>
+          <option value="objective" {% if writing_preferences.voice == 'objective' %}selected{% endif %}>Objective / research-led</option>
+        </select>
+      </label>
+      <label style="font-size:13px;font-weight:600">Analysis depth
+        <select name="depth" style="display:block;width:100%;margin-top:6px;padding:10px;border:1px solid #ccd6e3;border-radius:8px">
+          <option value="quick" {% if writing_preferences.depth == 'quick' %}selected{% endif %}>1 · Quick observation</option>
+          <option value="insight" {% if writing_preferences.depth == 'insight' %}selected{% endif %}>2 · Insight</option>
+          <option value="deep" {% if writing_preferences.depth == 'deep' %}selected{% endif %}>3 · Deep analysis</option>
+          <option value="thought_leadership" {% if writing_preferences.depth == 'thought_leadership' %}selected{% endif %}>4 · Thought leadership</option>
+        </select>
+      </label>
+      <label style="font-size:13px;font-weight:600">Post length
+        <select name="length" style="display:block;width:100%;margin-top:6px;padding:10px;border:1px solid #ccd6e3;border-radius:8px">
+          <option value="short" {% if writing_preferences.length == 'short' %}selected{% endif %}>Short</option>
+          <option value="medium" {% if writing_preferences.length == 'medium' %}selected{% endif %}>Medium</option>
+          <option value="long" {% if writing_preferences.length == 'long' %}selected{% endif %}>Long</option>
+        </select>
+      </label>
     </div>
+    <p class="sub">Your selections are saved as defaults. Each generation uses the selected topics and writing style.</p>
+    <button type="submit" style="margin-top:10px">Find content & generate drafts</button>
   </form>
 </section>
+
 <section class="panel" style="margin-top:16px">
   <div class="heading">
     <h2>Daily content plan</h2>
@@ -58,7 +103,7 @@
 </section>
 
 <div class="heading"><h2>Draft queue</h2><span class="sub">Review the source and edit before approval</span></div>
-{% for post in posts %}<article class="card"><div class="meta"><span class="tag">{{ categories[post.category]['weight'] }}% target</span><span>{{ categories[post.category]['label'] }}</span>{% if post.topic %}<span class="tag">{{ topics[post.topic]['label'] if post.topic in topics else post.topic }}</span>{% endif %}<span class="status">{{ post.status }}</span><span>Created {{ post.created_at.strftime('%d %b %Y, %H:%M') }} UTC</span></div><h3>{{ post.title }}</h3><div class="source">Source: <a href="{{ post.source_url }}" target="_blank" rel="noopener noreferrer">{{ post.source_name }} — open original</a>{% if post.source_published %} · {{ post.source_published }}{% endif %}</div>
+{% for post in posts %}<article class="card"><div class="meta"><span class="tag">{{ categories[post.category]['weight'] }}% target</span><span>{{ categories[post.category]['label'] }}</span><span class="status">{{ post.status }}</span><span>Created {{ post.created_at.strftime('%d %b %Y, %H:%M') }} UTC</span></div><h3>{{ post.title }}</h3><div class="source">Source: <a href="{{ post.source_url }}" target="_blank" rel="noopener noreferrer">{{ post.source_name }} — open original</a>{% if post.source_published %} · {{ post.source_published }}{% endif %}</div>
     {% if post.planned_date %}
   <span class="tag">Planned {{ post.planned_date }}</span>
 {% endif %}

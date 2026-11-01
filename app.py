@@ -97,6 +97,42 @@ def get_selected_topics():
         return DEFAULT_SELECTED_TOPICS.copy()
 
 
+WRITING_DEFAULTS = {
+    "format": "narrative",
+    "tone": "insightful",
+    "voice": "first_person",
+    "depth": "deep",
+    "length": "medium",
+}
+
+WRITING_OPTIONS = {
+    "format": {"narrative", "points", "breakdown", "hook", "contrarian", "case_study"},
+    "tone": {"insightful", "conversational", "provocative", "technical", "storytelling"},
+    "voice": {"first_person", "professional", "objective"},
+    "depth": {"quick", "insight", "deep", "thought_leadership"},
+    "length": {"short", "medium", "long"},
+}
+
+
+def get_writing_preferences():
+    preferences = {}
+    for key, default in WRITING_DEFAULTS.items():
+        value = db_get("writing_" + key, default)
+        preferences[key] = value if value in WRITING_OPTIONS[key] else default
+    return preferences
+
+
+def save_writing_preferences(values):
+    clean = {}
+    for key, allowed in WRITING_OPTIONS.items():
+        value = values.get(key, WRITING_DEFAULTS[key])
+        if value not in allowed:
+            value = WRITING_DEFAULTS[key]
+        clean[key] = value
+        db_set("writing_" + key, value)
+    return clean
+
+
 def build_topic_feeds(selected_topics=None):
     selected_topics = selected_topics or get_selected_topics()
     feeds = []
@@ -368,62 +404,100 @@ def create_draft(item):
     category = CATEGORIES.get(item["category"], DISPLAY_CATEGORIES.get(item["category"], {"label": item["category"]}))["label"]
     topic_name = TOPICS.get(item.get("topic", ""), {"label": category})["label"]
 
-    business_instructions = ""
+    preferences = get_writing_preferences()
+    post_format = preferences["format"]
+    tone = preferences["tone"]
+    voice = preferences["voice"]
+    depth = preferences["depth"]
+    length = preferences["length"]
 
+    format_guidance = {
+        "narrative": "Write natural, flowing paragraphs. Vary paragraph length and build a clear line of thought.",
+        "points": "Use a short opening followed by crisp, meaningful bullet points and a strong concluding insight. Do not turn every sentence into a bullet.",
+        "breakdown": "Use a compelling title-like hook and 2-4 clearly labelled sections. Explain the mechanics, implications and conclusion.",
+        "hook": "Open with a surprising but supportable observation or question. Build curiosity, explain the evidence, then deliver a clear payoff.",
+        "contrarian": "Develop a fair, evidence-based counterintuitive argument. Explain the conventional view, what it misses, and where the evidence leads. Do not manufacture controversy.",
+        "case_study": "Structure as context → decision/technology → mechanism → implications → lessons. Use only details supported by the source.",
+    }[post_format]
+    tone_guidance = {
+        "insightful": "Analytical, clear and intellectually curious. Prioritise a useful inference over hype.",
+        "conversational": "Natural and approachable, like explaining a sharp observation to a knowledgeable colleague.",
+        "provocative": "Confident and challenging, but fair, specific and evidence-led.",
+        "technical": "Technically precise. Explain mechanisms and trade-offs without drowning the reader in jargon.",
+        "storytelling": "Use narrative tension and progression, while staying factual and avoiding invented scenes or experiences.",
+    }[tone]
+    voice_guidance = {
+        "first_person": "Write in a recognisable first-person author voice where natural: use phrases such as 'What I find interesting…', 'My takeaway…' or 'I think the bigger question is…' only when they introduce a reasoned perspective. Never invent personal experience, experiments, employer details, or claims that the author did something.",
+        "professional": "Use a confident professional commentator voice. Avoid forced 'I' statements and corporate press-release language.",
+        "objective": "Use an evidence-led, neutral voice. Clearly separate reported facts from interpretation.",
+    }[voice]
+    depth_guidance = {
+        "quick": "One sharp observation and its implication. Keep analysis compact.",
+        "insight": "Go beyond summary: explain the mechanism, one meaningful implication and a clear conclusion.",
+        "deep": "Develop a substantial argument: explain what changed, why it matters, second-order effects, trade-offs or limitations, and what follows. Include a distinct inference, not just a takeaway.",
+        "thought_leadership": "Build an original, defensible point of view. Connect the development to a broader shift, consider a counterpoint, and end with a memorable conclusion. Do not overstate certainty.",
+    }[depth]
+    length_guidance = {"short": "70-120 words", "medium": "130-220 words", "long": "220-350 words"}[length]
+
+    business_instructions = ""
     if item["category"] == "business_decoding":
         business_instructions = """
-For startup and business deep dives, explain as much as the source supports:
-- What the company does and whom it serves.
-- Its business model and how it creates value.
-- How it earns revenue, if the source explains this.
-- Its cost structure, supply chain, distribution, or operations, if relevant.
-- Its competitive advantage, strategy, and major business trade-offs.
-- What other businesses or professionals can learn from the example.
-
-Choose the most interesting angle; do not force every point into every post.
-Distinguish facts reported by the source from your own clearly framed analysis.
-Never invent financial figures, margins, revenue, market share, or internal
-company practices. If evidence is missing, acknowledge the limitation.
+For business and startup topics, examine the business model, customer value,
+revenue logic, cost drivers, distribution, competitive advantage and strategic
+trade-offs where the source supports them. Choose only the most relevant angles.
+Never invent financial figures, market share, margins or internal practices.
 """
 
     prompt = f"""
-You are a thoughtful LinkedIn editor writing for professionals interested in
-data science, AI, cloud, technology careers, startups, and business strategy.
+You are writing as a thoughtful, technically literate professional who has a
+point of view. You are NOT a news summariser, press-release writer or generic
+social-media copywriter. Turn source material into original analysis that a
+smart reader would genuinely find worth reading.
 
-Create an original LinkedIn post based on the source below.
+THE REQUIRED THINKING WORK (do this silently before drafting):
+1. Establish exactly what the source confirms. Separate facts from claims and gaps.
+2. Find the most interesting tension, consequence, overlooked detail or question.
+3. Explain the mechanism: why does this development produce the effect you claim?
+4. Infer what it could mean for practitioners, businesses or the wider industry.
+5. Form one clear argument and a conclusion that follows from the reasoning.
+If the source is too thin to support a meaningful inference, say less rather
+than inventing insight. Do not treat a headline or promotional claim as proof.
 
-CATEGORY-SPECIFIC INSTRUCTIONS:
-{business_instructions}
+AUTHOR SETTINGS:
+Format: {post_format}. {format_guidance}
+Tone: {tone}. {tone_guidance}
+Voice: {voice}. {voice_guidance}
+Analysis depth: {depth}. {depth_guidance}
+Length: {length_guidance}.
 
-GENERAL RULES:
-- Aim for 120-220 words.
-- Start with a strong, specific hook, not clickbait.
-- Explain what happened or what the research found, then why it matters.
-- Include a useful practical takeaway.
-- Do not copy sentences or distinctive phrasing from the source.
-- Do not invent facts, metrics, quotations, results, or claims.
-- Treat the supplied snippet as potentially incomplete.
-- If the source is older, present it as valuable research, background,
-  or a retrospective—not as breaking news or a new discovery.
-- For job-related content, call it a confirmed opening only if the source
-  actually establishes that a role is open. Otherwise call it a job lead
-  and direct readers to the employer's official careers page.
-- Avoid generic filler and repetitive introductions.
-- Do not invent personal anecdotes or claim you personally tested something.
-- Use 3-5 relevant hashtags.
+NON-NEGOTIABLE WRITING RULES:
+- Do not merely paraphrase the article. A reader should get an idea, not just a recap.
+- Avoid formulaic labels such as "Why it matters", "Practical takeaway", "Key takeaways" and "In today's rapidly evolving world".
+- Avoid generic openings like "In a world where technology is changing".
+- Do not force a list, headings, first-person phrases, questions or hashtags when they do not fit.
+- Use concrete language, specific reasoning and varied sentence rhythm.
+- Make the inference explicit. Explain why it follows from the facts.
+- Include limitations or a counterpoint when it improves the analysis.
+- Never invent personal anecdotes, tests, conversations, professional experience,
+  statistics, quotations, product capabilities or causal relationships.
+- Do not claim the author personally used, built, tested or witnessed anything
+  unless the source explicitly says so (it usually will not).
+- Do not overstate an announcement's significance or turn speculation into fact.
+- Use 2-4 relevant hashtags, only if they add value.
 - Put the source URL on the final line.
-- Return only the post text.
+- Return only the finished LinkedIn post.
 
-Broad category: {category}
-Selected topic: {topic_name}
-Make the post specifically relevant to the selected topic, not just the broad category.
-Source title: {item['title']}
-Publisher/feed: {item['source_name']}
-Source URL: {item['url']}
-Publication date: {item['published']}
-Source snippet: {item['summary']}
+CATEGORY: {category}
+SELECTED TOPIC: {topic_name}
+CATEGORY-SPECIFIC CONTEXT: {business_instructions}
+SOURCE TITLE: {item['title']}
+PUBLISHER: {item['source_name']}
+SOURCE URL: {item['url']}
+PUBLICATION DATE: {item['published']}
+SOURCE SNIPPET: {item['summary']}
 
-Write the post now.
+Write something with a real point of view, sound reasoning and a satisfying
+conclusion. It should feel authored, not assembled from a template.
 """
 
     # Try each configured provider in order. A provider is skipped when its
@@ -472,7 +546,7 @@ Write the post now.
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
     if groq_key:
         try:
-            model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+            model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
             client = Groq(api_key=groq_key)
             response = client.chat.completions.create(
                 model=model,
@@ -495,7 +569,7 @@ Write the post now.
     cerebras_key = os.getenv("CEREBRAS_API_KEY", "").strip()
     if cerebras_key:
         try:
-            model = os.getenv("CEREBRAS_MODEL", "qwen-3.8-27b")
+            model = os.getenv("CEREBRAS_MODEL", "qwen-3-235b-a22b-instruct")
             client = Cerebras(api_key=cerebras_key)
             response = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
@@ -780,6 +854,7 @@ def dashboard(request: Request, notice: str = ""):
             "categories": DISPLAY_CATEGORIES,
             "topics": TOPICS,
             "selected_topics": get_selected_topics(),
+            "writing_preferences": get_writing_preferences(),
             "notice": notice,
             "planned_posts": planned_posts,
             "connected": bool(get_token()),
@@ -788,14 +863,28 @@ def dashboard(request: Request, notice: str = ""):
 
 
 @app.post("/generate")
-def generate_now(selected_topics: list[str] = Form([])):
+def generate_now(
+    selected_topics: list[str] = Form([]),
+    post_format: str = Form("narrative"),
+    tone: str = Form("insightful"),
+    voice: str = Form("first_person"),
+    depth: str = Form("deep"),
+    length: str = Form("medium"),
+):
     valid_topics = [topic for topic in selected_topics if topic in TOPICS]
     if not valid_topics:
         return RedirectResponse(url="/?notice=Select+at+least+one+topic+first", status_code=303)
     db_set("selected_topics", json.dumps(valid_topics))
+    save_writing_preferences({
+        "format": post_format,
+        "tone": tone,
+        "voice": voice,
+        "depth": depth,
+        "length": length,
+    })
     try:
         n = run_research_cycle(max_drafts=5)
-        msg = f"Created {n} draft(s) from your {len(valid_topics)} selected topic(s)."
+        msg = f"Created {n} draft(s) using your selected writing style and {len(valid_topics)} topic(s)."
     except Exception as exc:
         msg = f"Generation failed: {exc}"
     return RedirectResponse(url="/?notice=" + requests.utils.quote(msg), status_code=303)
