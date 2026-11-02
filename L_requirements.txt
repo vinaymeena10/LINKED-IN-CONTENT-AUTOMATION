@@ -11,3 +11,4 @@ cryptography>=43.0
 psycopg[binary]>=3.2,<4.0
 python-dotenv>=1.0,<2.0
 groq
+cerebras_cloud_sdk
