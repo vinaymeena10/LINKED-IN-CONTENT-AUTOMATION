@@ -14,7 +14,6 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from starlette.middleware.sessions import SessionMiddleware
 from google import genai
 from groq import Groq
 from cerebras.cloud.sdk import Cerebras
@@ -397,67 +396,12 @@ class PostRevision(Base):
 
 Base.metadata.create_all(engine)
 app = FastAPI(title=APP_NAME)
-# Signed, HTTP-only session cookie. Set SESSION_SECRET in Render Environment.
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=os.getenv("SESSION_SECRET", "CHANGE-ME-BEFORE-DEPLOYMENT"),
-    session_cookie="linkedin_studio_session",
-    max_age=60 * 60 * 12,
-    same_site="lax",
-    https_only=os.getenv("COOKIE_SECURE", "true").lower() == "true",
-)
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 Path("static/generated").mkdir(parents=True, exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
 scheduler = BackgroundScheduler(timezone=os.getenv("APP_TIMEZONE", "Asia/Kolkata"))
-
-
-# Private single-user access. Credentials are read only from environment variables.
-@app.middleware("http")
-async def require_admin_login(request: Request, call_next):
-    if request.url.path in {"/login", "/logout", "/health"}:
-        return await call_next(request)
-    if not request.session.get("admin_authenticated"):
-        if request.url.path.startswith("/static/"):
-            return RedirectResponse(url="/login", status_code=303)
-        return RedirectResponse(url="/login", status_code=303)
-    return await call_next(request)
-
-
-@app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request, error: str = ""):
-    if request.session.get("admin_authenticated"):
-        return RedirectResponse(url="/", status_code=303)
-    return templates.TemplateResponse(
-        request=request, name="login.html", context={"request": request, "error": error}
-    )
-
-
-@app.post("/login")
-def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
-    expected_user = os.getenv("ADMIN_USERNAME", "")
-    expected_password = os.getenv("ADMIN_PASSWORD", "")
-    if not expected_user or not expected_password:
-        raise HTTPException(status_code=503, detail="Admin login is not configured.")
-    user_ok = secrets.compare_digest(username, expected_user)
-    pass_ok = secrets.compare_digest(password, expected_password)
-    if not (user_ok and pass_ok):
-        return templates.TemplateResponse(
-            request=request, name="login.html",
-            context={"request": request, "error": "Incorrect username or password."},
-            status_code=401,
-        )
-    request.session.clear()
-    request.session["admin_authenticated"] = True
-    return RedirectResponse(url="/", status_code=303)
-
-
-@app.post("/logout")
-def logout(request: Request):
-    request.session.clear()
-    return RedirectResponse(url="/login", status_code=303)
 
 
 # Safe migration for existing databases.
