@@ -849,7 +849,7 @@ conclusion. It should feel authored, not assembled from a template.
     cerebras_key = os.getenv("CEREBRAS_API_KEY", "").strip()
     if cerebras_key:
         try:
-            model = os.getenv("CEREBRAS_MODEL", "qwen 3.8 27b")
+            model = os.getenv("CEREBRAS_MODEL", "qwen-3-235b-a22b-instruct")
             client = Cerebras(api_key=cerebras_key)
             response = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
@@ -1611,11 +1611,19 @@ def discover_page(request: Request, notice: str = ""):
     return templates.TemplateResponse(request=request, name="discover.html", context={"request":request,"notice":notice,"taxonomy":EDITORIAL_TAXONOMY,"domains":CONTENT_DOMAINS,"angles":EDITORIAL_ANGLES,"ideas":ideas})
 
 @app.post("/discover/search")
-def discover_search(category: str = Form(...), topic: str = Form(""), content_domain: str = Form("industry_news"), editorial_angle: str = Form("explain_why_it_matters"), audience: str = Form("professionals"), difficulty: str = Form("intermediate"), custom_topic: str = Form(""), period: str = Form("latest")):
+def discover_search(category: str = Form(...), topic: str = Form(""), content_domain: str = Form("industry_news"), editorial_angle: str = Form("explain_why_it_matters"), audience: str = Form("professionals"), difficulty: str = Form("intermediate"), custom_topic: str = Form(""), period: str = Form("latest"), post_format: str = Form("narrative"), post_tone: str = Form("professional"), point_of_view: str = Form("balanced"), hook_style: str = Form("strong_insight"), post_length: str = Form("medium"), cta_style: str = Form("insight"), creation_notes: str = Form("")):
     if category not in EDITORIAL_TAXONOMY: category = "data_science"
     if content_domain not in CONTENT_DOMAINS: content_domain = "industry_news"
     if editorial_angle not in EDITORIAL_ANGLES: editorial_angle = "explain_why_it_matters"
     selected_topic = custom_topic.strip()[:180] or topic.strip()[:180]
+    # Keep the creation brief with the idea so it reaches the drafting prompt later.
+    format_labels = {"narrative":"Insight-led narrative", "breakdown":"Structured breakdown", "points":"Actionable points", "case_study":"Case study", "contrarian":"Contrarian perspective", "hook":"Hook-led post", "framework":"Framework / model", "story":"Story with lesson"}
+    tone_labels = {"professional":"Professional & authoritative", "conversational":"Conversational", "analytical":"Analytical & data-led", "bold":"Bold & challenging", "educational":"Clear & educational"}
+    pov_labels = {"balanced":"Balanced analysis", "first_person":"First-person perspective", "expert":"Expert commentary", "beginner":"Beginner-friendly explainer", "operator":"Practitioner / operator lens"}
+    hook_labels = {"strong_insight":"Strong insight", "question":"Thought-provoking question", "statistic":"Evidence-backed statistic (source required)", "problem":"Problem-first opening", "story":"Short scenario; do not invent personal experience", "direct":"Direct statement"}
+    length_labels = {"short":"80–130 words", "medium":"130–220 words", "long":"220–350 words"}
+    cta_labels = {"insight":"Memorable closing insight", "question":"Invite thoughtful discussion", "action":"Practical next step", "none":"No CTA; clean ending"}
+    creation_brief = (f"CONTENT CREATION SETTINGS: Format: {format_labels.get(post_format, 'Insight-led narrative')}. Tone: {tone_labels.get(post_tone, 'Professional & authoritative')}. Point of view: {pov_labels.get(point_of_view, 'Balanced analysis')}. Opening: {hook_labels.get(hook_style, 'Strong insight')}. Length: {length_labels.get(post_length, '130–220 words')}. Ending: {cta_labels.get(cta_style, 'Memorable closing insight')}. Specific instructions: {creation_notes.strip()[:1200] or 'None'}. Follow these settings when drafting.")
     if not selected_topic:
         return RedirectResponse("/discover?notice=Choose+a+topic+or+enter+a+custom+topic", status_code=303)
     query = _idea_query(category, selected_topic, content_domain, editorial_angle)
@@ -1635,7 +1643,7 @@ def discover_search(category: str = Form(...), topic: str = Form(""), content_do
         ]
         with SessionLocal() as db:
             for title in titles:
-                db.add(EditorialIdea(category=category,topic=selected_topic,content_domain=content_domain,editorial_angle=editorial_angle,title=title,summary=f"Original educational content brief for {selected_topic}. Audience: {audience}. Level: {difficulty}. Build a correct explanation, practical example and learner exercise. Verify technical details before publishing.",audience=audience,difficulty=difficulty,status="idea"))
+                db.add(EditorialIdea(category=category,topic=selected_topic,content_domain=content_domain,editorial_angle=editorial_angle,title=title,summary=f"Original educational content brief for {selected_topic}. Audience: {audience}. Level: {difficulty}. Build a correct explanation, practical example and learner exercise. Verify technical details before publishing.\n{creation_brief}",audience=audience,difficulty=difficulty,status="idea"))
                 new_count += 1
             db.commit()
     else:
@@ -1653,7 +1661,7 @@ def discover_search(category: str = Form(...), topic: str = Form(""), content_do
                 exists = db.query(EditorialIdea).filter_by(title=title, source_url=link).first()
                 if exists: continue
                 summary = re.sub(r"<[^>]+>", " ", entry.get("summary", "") or "")[:3000]
-                db.add(EditorialIdea(category=category,topic=selected_topic,content_domain=content_domain,editorial_angle=editorial_angle,title=title,summary=summary,source_url=link,source_name="Google News discovery",audience=audience,difficulty=difficulty,status="idea"))
+                db.add(EditorialIdea(category=category,topic=selected_topic,content_domain=content_domain,editorial_angle=editorial_angle,title=title,summary=(summary or "") + "\n" + creation_brief,source_url=link,source_name="Google News discovery",audience=audience,difficulty=difficulty,status="idea"))
                 new_count += 1
             db.commit()
     return RedirectResponse("/discover?notice=" + requests.utils.quote(f"Added {new_count} idea(s). Review the sources and choose what to develop."), status_code=303)

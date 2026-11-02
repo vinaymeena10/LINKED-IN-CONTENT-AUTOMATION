@@ -1,0 +1,52 @@
+[1mdiff --git a/app.py b/app.py[m
+[1mindex 92667a1..d4c2f1b 100644[m
+[1m--- a/app.py[m
+[1m+++ b/app.py[m
+[36m@@ -849,7 +849,7 @@[m [mconclusion. It should feel authored, not assembled from a template.[m
+     cerebras_key = os.getenv("CEREBRAS_API_KEY", "").strip()[m
+     if cerebras_key:[m
+         try:[m
+[31m-            model = os.getenv("CEREBRAS_MODEL", "qwen 3.8 27b")[m
+[32m+[m[32m            model = os.getenv("CEREBRAS_MODEL", "qwen-3-235b-a22b-instruct")[m
+             client = Cerebras(api_key=cerebras_key)[m
+             response = client.chat.completions.create([m
+                 messages=[{"role": "user", "content": prompt}],[m
+[36m@@ -1611,11 +1611,19 @@[m [mdef discover_page(request: Request, notice: str = ""):[m
+     return templates.TemplateResponse(request=request, name="discover.html", context={"request":request,"notice":notice,"taxonomy":EDITORIAL_TAXONOMY,"domains":CONTENT_DOMAINS,"angles":EDITORIAL_ANGLES,"ideas":ideas})[m
+ [m
+ @app.post("/discover/search")[m
+[31m-def discover_search(category: str = Form(...), topic: str = Form(""), content_domain: str = Form("industry_news"), editorial_angle: str = Form("explain_why_it_matters"), audience: str = Form("professionals"), difficulty: str = Form("intermediate"), custom_topic: str = Form(""), period: str = Form("latest")):[m
+[32m+[m[32mdef discover_search(category: str = Form(...), topic: str = Form(""), content_domain: str = Form("industry_news"), editorial_angle: str = Form("explain_why_it_matters"), audience: str = Form("professionals"), difficulty: str = Form("intermediate"), custom_topic: str = Form(""), period: str = Form("latest"), post_format: str = Form("narrative"), post_tone: str = Form("professional"), point_of_view: str = Form("balanced"), hook_style: str = Form("strong_insight"), post_length: str = Form("medium"), cta_style: str = Form("insight"), creation_notes: str = Form("")):[m
+     if category not in EDITORIAL_TAXONOMY: category = "data_science"[m
+     if content_domain not in CONTENT_DOMAINS: content_domain = "industry_news"[m
+     if editorial_angle not in EDITORIAL_ANGLES: editorial_angle = "explain_why_it_matters"[m
+     selected_topic = custom_topic.strip()[:180] or topic.strip()[:180][m
+[32m+[m[32m    # Keep the creation brief with the idea so it reaches the drafting prompt later.[m
+[32m+[m[32m    format_labels = {"narrative":"Insight-led narrative", "breakdown":"Structured breakdown", "points":"Actionable points", "case_study":"Case study", "contrarian":"Contrarian perspective", "hook":"Hook-led post", "framework":"Framework / model", "story":"Story with lesson"}[m
+[32m+[m[32m    tone_labels = {"professional":"Professional & authoritative", "conversational":"Conversational", "analytical":"Analytical & data-led", "bold":"Bold & challenging", "educational":"Clear & educational"}[m
+[32m+[m[32m    pov_labels = {"balanced":"Balanced analysis", "first_person":"First-person perspective", "expert":"Expert commentary", "beginner":"Beginner-friendly explainer", "operator":"Practitioner / operator lens"}[m
+[32m+[m[32m    hook_labels = {"strong_insight":"Strong insight", "question":"Thought-provoking question", "statistic":"Evidence-backed statistic (source required)", "problem":"Problem-first opening", "story":"Short scenario; do not invent personal experience", "direct":"Direct statement"}[m
+[32m+[m[32m    length_labels = {"short":"80–130 words", "medium":"130–220 words", "long":"220–350 words"}[m
+[32m+[m[32m    cta_labels = {"insight":"Memorable closing insight", "question":"Invite thoughtful discussion", "action":"Practical next step", "none":"No CTA; clean ending"}[m
+[32m+[m[32m    creation_brief = (f"CONTENT CREATION SETTINGS: Format: {format_labels.get(post_format, 'Insight-led narrative')}. Tone: {tone_labels.get(post_tone, 'Professional & authoritative')}. Point of view: {pov_labels.get(point_of_view, 'Balanced analysis')}. Opening: {hook_labels.get(hook_style, 'Strong insight')}. Length: {length_labels.get(post_length, '130–220 words')}. Ending: {cta_labels.get(cta_style, 'Memorable closing insight')}. Specific instructions: {creation_notes.strip()[:1200] or 'None'}. Follow these settings when drafting.")[m
+     if not selected_topic:[m
+         return RedirectResponse("/discover?notice=Choose+a+topic+or+enter+a+custom+topic", status_code=303)[m
+     query = _idea_query(category, selected_topic, content_domain, editorial_angle)[m
+[36m@@ -1635,7 +1643,7 @@[m [mdef discover_search(category: str = Form(...), topic: str = Form(""), content_do[m
+         ][m
+         with SessionLocal() as db:[m
+             for title in titles:[m
+[31m-                db.add(EditorialIdea(category=category,topic=selected_topic,content_domain=content_domain,editorial_angle=editorial_angle,title=title,summary=f"Original educational content brief for {selected_topic}. Audience: {audience}. Level: {difficulty}. Build a correct explanation, practical example and learner exercise. Verify technical details before publishing.",audience=audience,difficulty=difficulty,status="idea"))[m
+[32m+[m[32m                db.add(EditorialIdea(category=category,topic=selected_topic,content_domain=content_domain,editorial_angle=editorial_angle,title=title,summary=f"Original educational content brief for {selected_topic}. Audience: {audience}. Level: {difficulty}. Build a correct explanation, practical example and learner exercise. Verify technical details before publishing.\n{creation_brief}",audience=audience,difficulty=difficulty,status="idea"))[m
+                 new_count += 1[m
+             db.commit()[m
+     else:[m
+[36m@@ -1653,7 +1661,7 @@[m [mdef discover_search(category: str = Form(...), topic: str = Form(""), content_do[m
+                 exists = db.query(EditorialIdea).filter_by(title=title, source_url=link).first()[m
+                 if exists: continue[m
+                 summary = re.sub(r"<[^>]+>", " ", entry.get("summary", "") or "")[:3000][m
+[31m-                db.add(EditorialIdea(category=category,topic=selected_topic,content_domain=content_domain,editorial_angle=editorial_angle,title=title,summary=summary,source_url=link,source_name="Google News discovery",audience=audience,difficulty=difficulty,status="idea"))[m
+[32m+[m[32m                db.add(EditorialIdea(category=category,topic=selected_topic,content_domain=content_domain,editorial_angle=editorial_angle,title=title,summary=(summary or "") + "\n" + creation_brief,source_url=link,source_name="Google News discovery",audience=audience,difficulty=difficulty,status="idea"))[m
+                 new_count += 1[m
+             db.commit()[m
+     return RedirectResponse("/discover?notice=" + requests.utils.quote(f"Added {new_count} idea(s). Review the sources and choose what to develop."), status_code=303)[m
