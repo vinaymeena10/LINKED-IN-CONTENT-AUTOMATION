@@ -181,6 +181,11 @@ class Post(Base):
     fingerprint = Column(String(64), unique=True, nullable=False)
     account_id = Column(Integer, nullable=True, index=True)
     image_url = Column(String(1500), default="")
+    content_domain = Column(String(80), default="industry_news")
+    editorial_angle = Column(String(120), default="explain_why_it_matters")
+    audience = Column(String(120), default="professionals")
+    difficulty = Column(String(30), default="intermediate")
+    content_brief = Column(Text, default="")
 
 class LinkedInAccount(Base):
     __tablename__ = "linkedin_accounts"
@@ -363,6 +368,32 @@ def fetch_company_jobs(company):
     return [j for j in jobs if j.get("title") and j.get("apply_url")]
 
 
+class EditorialIdea(Base):
+    __tablename__ = "editorial_ideas"
+    id = Column(Integer, primary_key=True)
+    category = Column(String(60), default="")
+    topic = Column(String(80), default="")
+    content_domain = Column(String(80), default="")
+    editorial_angle = Column(String(120), default="")
+    title = Column(String(500), nullable=False)
+    summary = Column(Text, default="")
+    source_url = Column(String(1500), default="")
+    source_name = Column(String(300), default="")
+    audience = Column(String(120), default="professionals")
+    difficulty = Column(String(30), default="intermediate")
+    status = Column(String(30), default="idea", index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class PostRevision(Base):
+    __tablename__ = "post_revisions"
+    id = Column(Integer, primary_key=True)
+    post_id = Column(Integer, nullable=False, index=True)
+    draft = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    note = Column(String(300), default="Saved edit")
+
+
+
 Base.metadata.create_all(engine)
 app = FastAPI(title=APP_NAME)
 from fastapi.staticfiles import StaticFiles
@@ -392,6 +423,15 @@ with engine.begin() as connection:
         connection.execute(text("ALTER TABLE posts ADD COLUMN account_id INTEGER"))
     if "image_url" not in columns:
         connection.execute(text("ALTER TABLE posts ADD COLUMN image_url VARCHAR(1500) DEFAULT ''"))
+    for column_name, sql_type, default_sql in [
+        ("content_domain", "VARCHAR(80)", "'industry_news'"),
+        ("editorial_angle", "VARCHAR(120)", "'explain_why_it_matters'"),
+        ("audience", "VARCHAR(120)", "'professionals'"),
+        ("difficulty", "VARCHAR(30)", "'intermediate'"),
+        ("content_brief", "TEXT", "''"),
+    ]:
+        if column_name not in columns:
+            connection.execute(text(f"ALTER TABLE posts ADD COLUMN {column_name} {sql_type} DEFAULT {default_sql}"))
 
 # Preserve a previously connected single LinkedIn account when upgrading.
 with SessionLocal() as db:
@@ -667,6 +707,10 @@ def create_draft(item):
     }[depth]
     length_guidance = {"short": "70-120 words", "medium": "130-220 words", "long": "220-350 words"}[length]
 
+    source_line_instruction = "Put the source URL on the final line."
+    if "educational brief" in (item.get("source_name", "").lower()):
+        source_line_instruction = "This is an original educational prompt, not a news source. Do not append a fabricated citation or source URL. Teach accurately, state assumptions where needed, and include a worked example or learner exercise when appropriate."
+
     business_instructions = ""
     if item["category"] == "business_decoding":
         business_instructions = """
@@ -674,6 +718,13 @@ For business and startup topics, examine the business model, customer value,
 revenue logic, cost drivers, distribution, competitive advantage and strategic
 trade-offs where the source supports them. Choose only the most relevant angles.
 Never invent financial figures, market share, margins or internal practices.
+"""
+    elif item["category"] == "marketing":
+        business_instructions = """
+For branding and marketing topics, analyse the audience, positioning, creative
+idea, channel strategy, consumer psychology and measurable campaign mechanics
+only where supported by the source. Distinguish a campaign launch from evidence
+of campaign success. Never invent reach, conversions, sales lift or ROI.
 """
 
     prompt = f"""
@@ -713,7 +764,7 @@ NON-NEGOTIABLE WRITING RULES:
 - Do not overstate an announcement's significance or turn speculation into fact.
 - For lists, use the actual Unicode bullet character • at the start of each list line. Never use Markdown asterisks (*) or hyphens (-) as bullet markers. Leave a blank line between list items where useful.
 - Use 2-4 relevant hashtags, only if they add value.
-- Put the source URL on the final line.
+- {source_line_instruction}
 - Return only the finished LinkedIn post.
 
 CATEGORY: {category}
@@ -798,7 +849,7 @@ conclusion. It should feel authored, not assembled from a template.
     cerebras_key = os.getenv("CEREBRAS_API_KEY", "").strip()
     if cerebras_key:
         try:
-            model = os.getenv("CEREBRAS_MODEL", "qwen-3-235b-a22b-instruct")
+            model = os.getenv("CEREBRAS_MODEL", "qwen 3.8 27b")
             client = Cerebras(api_key=cerebras_key)
             response = client.chat.completions.create(
                 messages=[{"role": "user", "content": prompt}],
@@ -1196,6 +1247,8 @@ def save_post(post_id: int, draft: str = Form(...)):
         post = db.get(Post, post_id)
         if not post: raise HTTPException(404, "Post not found")
         if post.status == "published": raise HTTPException(409, "Published posts cannot be edited here")
+        if post.draft and post.draft != draft:
+            db.add(PostRevision(post_id=post.id, draft=post.draft, note="Before editor save"))
         post.draft = normalize_linkedin_bullets(draft); post.status = "pending"; post.error = ""; db.commit()
     return RedirectResponse(url="/?notice=Draft+saved", status_code=303)
 
@@ -1391,9 +1444,21 @@ def search_jobs(
                     if terms and not any(term in haystack for term in terms):
                         continue
                     if location.strip() and location.strip().lower() not in {"anywhere", "all"}:
-                        loc = (item["location"] + " " + item.get("workplace_type", "")).lower()
+                        loc = (item.get("location", "") + " " + item.get("workplace_type", "")).lower()
                         wanted = location.strip().lower()
-                        if wanted not in loc and "remote" not in loc and wanted not in {"india", "worldwide"}:
+                        if wanted == "india":
+                            india_places = ("india", "bengaluru", "bangalore", "mumbai", "delhi", "new delhi", "gurugram", "gurgaon", "noida", "hyderabad", "pune", "chennai", "kolkata", "ahmedabad", "jaipur", "kochi", "thiruvananthapuram", "indore", "lucknow", "chandigarh")
+                            is_remote = "remote" in loc or "remote" in item.get("workplace_type", "").lower()
+                            is_india_location = any(place in loc for place in india_places)
+                            if is_remote or not is_india_location:
+                                continue
+                        elif wanted == "remote":
+                            if "remote" not in loc:
+                                continue
+                        elif wanted == "worldwide":
+                            if "worldwide" not in loc and "anywhere" not in loc:
+                                continue
+                        elif wanted not in loc:
                             continue
                     existing = db.query(JobListing).filter_by(external_id=item["external_id"]).first()
                     if existing:
@@ -1494,6 +1559,147 @@ def generate_post_image(post_id: int):
         except Exception as exc:
             return RedirectResponse("/?notice=" + requests.utils.quote(f"Image generation failed: {str(exc)[:180]}"), status_code=303)
     return RedirectResponse("/?notice=Post+image+generated", status_code=303)
+
+
+# Editorial taxonomy: the same topic can be explored through different domains.
+EDITORIAL_TAXONOMY = {
+ "data_science": {"label":"Data Science & Analytics","topics":["Data analysis","SQL & databases","Statistics & experimentation","Business analytics","Data engineering","Forecasting & optimisation","Dashboards & storytelling"],"angles":["SQL interview challenge","Explain a concept with an example","Practical project walkthrough","Real-world business case","Industry development decoded","Career skills roadmap"]},
+ "ai_research": {"label":"AI, ML & Research","topics":["Machine learning","Deep learning","Neural networks","NLP","LLMs & generative AI","Computer vision","AI research & benchmarks","AI tools & models","AI ethics & governance"],"angles":["Research paper decoded","Model comparison","Build it step by step","Concept explained simply","New breakthrough decoded","Business application","Myth versus reality"]},
+ "agentic_ai": {"label":"Agentic AI & Automation","topics":["AI agents","Multi-agent systems","Agent frameworks","Tool calling & MCP","Agent memory","Coding agents","Enterprise agents","Agent evaluation","Agent security"],"angles":["Build an agent tutorial","Architecture breakdown","Framework comparison","Enterprise use case","New product decoded","Security failure analysis"]},
+ "business_decoding": {"label":"Startup & Business Decoding","topics":["Emerging startups","Newly funded startups","Founder stories","Business models","Unit economics","Venture capital","Product innovation","Market disruption","Startup failures","Competitor analysis"],"angles":["Startup spotlight","How it makes money","Why it is growing","Founder decision decoded","Competitor versus incumbent","Funding round explained","What could go wrong"]},
+ "marketing": {"label":"Branding & Marketing","topics":["Emerging brands","Brand positioning & identity","Campaigns & advertisements","Viral marketing","Consumer psychology","Growth marketing","Influencer marketing","Product launches","Promotions & pricing","Brand crises & rebranding","Martech & AI marketing"],"angles":["Campaign decoded","Brand strategy breakdown","Consumer psychology explained","Creative strategy analysis","Promotion mechanics","Competitor positioning","What marketers can learn"]},
+ "cloud_automation": {"label":"Cloud, Technology & Automation","topics":["AWS, Azure & GCP","Cloud architecture","DevOps & CI/CD","Docker & Kubernetes","Data platforms","APIs & integrations","Cybersecurity","Open source releases","Automation workflows"],"angles":["Hands-on tutorial","Architecture explained","Tool comparison","Pricing decoded","Product release analysis","Implementation case study"]},
+ "careers": {"label":"Technology Careers","topics":["Career roadmaps","SQL & Python interviews","Machine learning interviews","System design","Portfolio projects","Hiring trends","Skills intelligence","Resume & LinkedIn","Career transitions"],"angles":["Interview question with solution","30-day learning roadmap","Portfolio project brief","Skill gap analysis","Hiring trend decoded","Career myth versus reality"]}
+}
+CONTENT_DOMAINS = {
+ "education":"Education & learning", "industry_news":"Industry news & announcements", "research":"Research & publications", "business":"Business intelligence & case studies", "emerging_players":"Emerging startups & brands", "tools":"Tools, tutorials & implementation", "careers":"Careers & hiring", "opinion":"Opinion, debate & thought leadership", "media":"Campaigns, media & creative work", "evergreen":"Evergreen explainers"
+}
+EDITORIAL_ANGLES = {
+ "explain_why_it_matters":"Explain a concept and why it matters", "step_by_step":"Step-by-step tutorial", "challenge":"Question, challenge or quiz", "case_study":"Real-world case study", "decoded":"Decode a company, product or campaign", "comparison":"Compare alternatives", "trend_analysis":"Trend analysis", "research_summary":"Research paper / report decoded", "contrarian":"Contrarian viewpoint", "career_roadmap":"Career roadmap or interview prep", "founder_story":"Founder or origin story", "how_it_makes_money":"How the business makes money"
+}
+
+def _idea_query(category, topic, domain, angle, custom_topic=""):
+    subject = (custom_topic or topic or "").strip()
+    if domain == "education":
+        return f'{subject} tutorial OR explained OR examples OR exercises OR interview questions'
+    if domain == "research":
+        return f'{subject} research paper OR study OR benchmark OR arxiv'
+    if domain == "emerging_players":
+        return f'{subject} startup launch OR funding OR founder OR company'
+    if domain == "business":
+        return f'{subject} business model OR market analysis OR revenue OR case study'
+    if domain == "tools":
+        return f'{subject} tool release OR tutorial OR documentation OR GitHub'
+    if domain == "careers":
+        return f'{subject} skills OR hiring trends OR interview OR career roadmap'
+    if domain == "media":
+        return f'{subject} brand campaign OR advertising OR promotion OR marketing campaign'
+    if domain == "opinion":
+        return f'{subject} debate OR analysis OR industry perspective'
+    if domain == "evergreen":
+        return f'{subject} fundamentals OR guide OR explained OR practical examples'
+    return f'{subject} latest news OR announcement OR launch OR industry development'
+
+@app.get("/topics")
+def topic_library_redirect():
+    return RedirectResponse("/discover", status_code=303)
+
+@app.get("/discover", response_class=HTMLResponse)
+def discover_page(request: Request, notice: str = ""):
+    with SessionLocal() as db:
+        ideas = db.query(EditorialIdea).order_by(desc(EditorialIdea.created_at)).limit(40).all()
+    return templates.TemplateResponse(request=request, name="discover.html", context={"request":request,"notice":notice,"taxonomy":EDITORIAL_TAXONOMY,"domains":CONTENT_DOMAINS,"angles":EDITORIAL_ANGLES,"ideas":ideas})
+
+@app.post("/discover/search")
+def discover_search(category: str = Form(...), topic: str = Form(""), content_domain: str = Form("industry_news"), editorial_angle: str = Form("explain_why_it_matters"), audience: str = Form("professionals"), difficulty: str = Form("intermediate"), custom_topic: str = Form(""), period: str = Form("latest")):
+    if category not in EDITORIAL_TAXONOMY: category = "data_science"
+    if content_domain not in CONTENT_DOMAINS: content_domain = "industry_news"
+    if editorial_angle not in EDITORIAL_ANGLES: editorial_angle = "explain_why_it_matters"
+    selected_topic = custom_topic.strip()[:180] or topic.strip()[:180]
+    if not selected_topic:
+        return RedirectResponse("/discover?notice=Choose+a+topic+or+enter+a+custom+topic", status_code=303)
+    query = _idea_query(category, selected_topic, content_domain, editorial_angle)
+    if period == "month":
+        query += " when:30d"
+    elif period == "evergreen":
+        query += " fundamentals OR guide OR tutorial"
+    new_count = 0
+    # Education and evergreen are idea-first: no artificial requirement for a fresh news article.
+    if content_domain in {"education", "evergreen"}:
+        titles = [
+            f"{selected_topic}: the fundamentals explained with a practical example",
+            f"A hands-on {selected_topic} exercise to test your understanding",
+            f"5 common mistakes people make when learning {selected_topic}",
+            f"A beginner-to-intermediate learning path for {selected_topic}",
+            f"{selected_topic} interview challenge: solve it step by step",
+        ]
+        with SessionLocal() as db:
+            for title in titles:
+                db.add(EditorialIdea(category=category,topic=selected_topic,content_domain=content_domain,editorial_angle=editorial_angle,title=title,summary=f"Original educational content brief for {selected_topic}. Audience: {audience}. Level: {difficulty}. Build a correct explanation, practical example and learner exercise. Verify technical details before publishing.",audience=audience,difficulty=difficulty,status="idea"))
+                new_count += 1
+            db.commit()
+    else:
+        url = "https://news.google.com/rss/search?q=" + requests.utils.quote(query) + "&hl=en-IN&gl=IN&ceid=IN:en"
+        try:
+            feed = feedparser.parse(url)
+            entries = feed.entries[:18]
+        except Exception:
+            entries = []
+        with SessionLocal() as db:
+            for entry in entries:
+                title = (entry.get("title") or "").strip()
+                link = entry.get("link") or ""
+                if not title or not link: continue
+                exists = db.query(EditorialIdea).filter_by(title=title, source_url=link).first()
+                if exists: continue
+                summary = re.sub(r"<[^>]+>", " ", entry.get("summary", "") or "")[:3000]
+                db.add(EditorialIdea(category=category,topic=selected_topic,content_domain=content_domain,editorial_angle=editorial_angle,title=title,summary=summary,source_url=link,source_name="Google News discovery",audience=audience,difficulty=difficulty,status="idea"))
+                new_count += 1
+            db.commit()
+    return RedirectResponse("/discover?notice=" + requests.utils.quote(f"Added {new_count} idea(s). Review the sources and choose what to develop."), status_code=303)
+
+@app.post("/ideas/{idea_id}/research")
+def mark_idea_researching(idea_id: int):
+    with SessionLocal() as db:
+        idea = db.get(EditorialIdea, idea_id)
+        if not idea: raise HTTPException(404, "Idea not found")
+        idea.status = "researching"
+        db.commit()
+    return RedirectResponse("/editorial?notice=Idea+moved+to+Researching", status_code=303)
+
+@app.post("/ideas/{idea_id}/generate")
+def generate_from_idea(idea_id: int):
+    with SessionLocal() as db:
+        idea = db.get(EditorialIdea, idea_id)
+        if not idea: raise HTTPException(404, "Idea not found")
+        url = idea.source_url or ("https://www.google.com/search?q=" + requests.utils.quote(idea.topic or idea.title))
+        source_name = idea.source_name or "Original educational brief"
+        if idea.content_domain in {"education", "evergreen"}:
+            url = "https://www.google.com/search?q=" + requests.utils.quote(idea.topic or idea.title)
+            source_name = "Original educational brief · search reference"
+        category_map = {"agentic_ai": "ai_research"}
+        idea_category = category_map.get(idea.category, idea.category)
+        item = {"category":idea_category if idea_category in DISPLAY_CATEGORIES else "data_science","topic":idea.topic,"title":idea.title,"source_name":source_name,"url":url,"published":"","summary":(idea.summary or "") + f"\nEditorial domain: {CONTENT_DOMAINS.get(idea.content_domain,idea.content_domain)}. Editorial angle: {EDITORIAL_ANGLES.get(idea.editorial_angle,idea.editorial_angle)}. Audience: {idea.audience}. Difficulty: {idea.difficulty}. Do not invent facts or statistics."}
+        draft = create_draft(item)
+        fp = fingerprint(url, idea.title + str(idea.id))
+        post = Post(category=item["category"],topic=idea.topic[:60],title=idea.title[:500],source_url=url,source_name=item["source_name"],source_published="",draft=draft,status="pending",fingerprint=fp,content_domain=idea.content_domain,editorial_angle=idea.editorial_angle,audience=idea.audience,difficulty=idea.difficulty,content_brief=idea.summary or "")
+        db.add(post); idea.status="drafted"; db.commit()
+    return RedirectResponse("/?notice=Idea+turned+into+a+draft", status_code=303)
+
+@app.get("/editorial", response_class=HTMLResponse)
+def editorial_board(request: Request, notice: str = ""):
+    with SessionLocal() as db:
+        columns = {status: db.query(Post).filter(Post.status == status).order_by(desc(Post.created_at)).limit(60).all() for status in ["pending","approved","published","rejected","failed"]}
+        ideas = db.query(EditorialIdea).filter(EditorialIdea.status.in_(["idea", "researching"])).order_by(desc(EditorialIdea.created_at)).limit(24).all()
+    return templates.TemplateResponse(request=request,name="editorial.html",context={"request":request,"notice":notice,"columns":columns,"ideas":ideas,"domains":CONTENT_DOMAINS,"angles":EDITORIAL_ANGLES,"categories":DISPLAY_CATEGORIES})
+
+@app.get("/posts/{post_id}/history", response_class=HTMLResponse)
+def post_history(request: Request, post_id: int):
+    with SessionLocal() as db:
+        post=db.get(Post,post_id)
+        if not post: raise HTTPException(404,"Post not found")
+        revisions=db.query(PostRevision).filter_by(post_id=post_id).order_by(desc(PostRevision.created_at)).all()
+    return templates.TemplateResponse(request=request,name="history.html",context={"request":request,"post":post,"revisions":revisions})
 
 @app.get("/health")
 def health(): return {"ok":True,"app":APP_NAME,"time":datetime.now(timezone.utc).isoformat()}

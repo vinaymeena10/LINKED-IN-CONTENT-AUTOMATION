@@ -1,73 +1,49 @@
-# LinkedIn Content Studio
+# LinkedIn Growth Studio — Editorial Intelligence Edition
 
-A separate Python web app for researching public RSS content, generating original LinkedIn drafts with Google Gemini, reviewing/editing drafts, and publishing only after a human explicitly approves them.
+A FastAPI app that keeps the existing LinkedIn OAuth, AI text providers, approval-gated publishing, job discovery and image-generation workflow, and adds a more granular editorial discovery layer.
 
-## Topic-based content preferences
+## What's included
 
-Choose one or more topics on the dashboard before generating drafts. Preferences are saved in the database and control which research feeds are queried. Available topics include Data Science, Machine Learning, Deep Learning, Neural Networks, NLP, Artificial Intelligence, Agentic AI, LLMs, AI Research & Tools, Startup Decoding, Business & Industry Decoding, Branding & Marketing, Cloud & Automation, and Technology Careers.
+- Warm ivory / charcoal / forest-green / terracotta editorial UI.
+- Discover workspace with seven main editorial categories and detailed subtopics.
+- Reusable content domains: Education, Industry News, Research, Business Intelligence, Emerging Players, Tools & Tutorials, Careers, Opinion, Media/Campaigns and Evergreen.
+- Editorial angles, audience and difficulty controls.
+- Education and evergreen idea generation without requiring a recent news article.
+- Google News RSS discovery for current news, research, startup, business and campaign queries.
+- Idea bank with one-click conversion into an AI draft.
+- Editorial kanban board for drafts, approved, published and failed posts.
+- Saved edit history for posts.
+- Existing LinkedIn account management, publishing approval gate, job search and image route retained.
+- Strict India job filtering: only India-located roles, excludes remote listings when India is selected.
 
-The app keeps the existing human-review workflow: drafts are not published unless the operator explicitly approves and publishes them.
-
-## Run locally
-
-Requires Python 3.11+ (3.12 recommended).
-
-```bash
-python -m venv .venv
-# Windows PowerShell: .venv\Scripts\Activate.ps1
-# macOS/Linux: source .venv/bin/activate
-pip install -r L_requirements.txt
-copy .env.example .env  # Windows; on macOS/Linux use cp .env.example .env
-```
-
-Generate an encryption key:
-
-```bash
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
-
-Put that value in `APP_ENCRYPTION_KEY` in `.env`, then add your `GEMINI_API_KEY`. Load environment variables before running. On PowerShell, for example:
+## Local setup
 
 ```powershell
-Get-Content .env | Where-Object { $_ -match '^[A-Za-z_][A-Za-z0-9_]*=' -and $_ -notmatch '^\s*#' } | ForEach-Object { $name,$value=$_.Split('=',2); Set-Item -Path "Env:$name" -Value $value }
-uvicorn app:app --reload --port 8080
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r L_requirements.txt
+uvicorn app:app --reload --port 8000
 ```
 
-Open http://localhost:8080. The scheduled task creates drafts at 08:00 Asia/Kolkata by default. The **Generate drafts** button can be used to run research on demand.
-
-## LinkedIn setup
-
-1. Create a LinkedIn developer app and request the product/permission needed to share posts on behalf of a member. `w_member_social` is the typical member posting permission; access depends on LinkedIn's app approval and current program requirements.
-2. Register the exact callback URL, locally `http://localhost:8080/auth/linkedin/callback`, and in production the HTTPS URL for your Render service, ending in `/auth/linkedin/callback`. The callback URL in the LinkedIn Developer Portal must exactly match `LINKEDIN_REDIRECT_URI`.
-3. Set `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, and `LINKEDIN_REDIRECT_URI` as environment variables.
-4. In Settings, click Connect LinkedIn and approve the requested permissions.
-5. Test by creating a draft, reviewing its source, editing it, clicking Approve, and only then clicking Publish to LinkedIn.
-
-The app calls the official LinkedIn Posts API (`POST /rest/posts`) with the configured `LINKEDIN_API_VERSION` (starter default `202607`). Check the current supported version in LinkedIn's developer documentation before deployment. OAuth tokens are encrypted at rest using `APP_ENCRYPTION_KEY`; never share or commit API keys, client secrets, tokens, or `.env` files.
-
-## Cloud deployment
-
-Deploy the included Dockerfile to a managed container service (for example, Google Cloud Run) and attach a **persistent PostgreSQL database**. Configure all secrets in the hosting provider's secret manager, not in source code. Set `DATABASE_URL` to the PostgreSQL connection string, `LINKEDIN_REDIRECT_URI` to your production HTTPS callback, and `APP_ENCRYPTION_KEY` to a stable Fernet key. Keep a single scheduler instance running so duplicate daily jobs are not triggered by multiple replicas. Configure a persistent volume or managed database; the default SQLite file is intended only for local development.
-
-For a reliable production setup, deploy the web app and the scheduled worker as separate services (the web service uses `ENABLE_SCHEDULER=false`; one worker runs the scheduler) or use your cloud provider's scheduler to call an authenticated internal job endpoint after adding authentication. Do not expose an unauthenticated job-trigger endpoint publicly. Add authentication to the dashboard before exposing it to the internet; this starter is intended for a private deployment and does not yet include user login/CSRF protection.
-
-## Research sources
-
-Default feeds include arXiv RSS, Google AI Blog, Google Cloud Blog, AWS News Blog, and Google News RSS searches for career and brand trends. Feed availability can change. Customize via `FEEDS_JSON`, a JSON array with `category`, `name`, and `url` fields. Categories must be one of `data_science`, `ai_research`, `cloud_automation`, `careers`, `marketing`.
-
-Job posts from news/search feeds are not verified vacancies. Verify role, location, recency, and application link on the employer's official careers page before publishing.
-
-## Current limitations / next production steps
-
-- Feed-based research; not a general-purpose LinkedIn scraper.
-- Human approval is mandatory; there is no automatic publishing job.
-- A cloud deployment needs HTTPS, a persistent database, secrets management, and dashboard authentication.
-- OAuth token refresh/expiry handling should be added based on the actual LinkedIn app/token policy before long-running production use.
-- The initial quota algorithm uses category targets over a rolling queue; exact long-term quotas depend on source availability.
-
+Open `http://127.0.0.1:8000`.
 
 ## Render deployment
 
-This repository includes a Dockerfile that installs `L_requirements.txt`. In Render, create a Web Service connected to this GitHub repository and use Docker as the runtime. Add these environment variables in Render's Environment page: `GEMINI_API_KEY`, `GEMINI_MODEL`, `APP_ENCRYPTION_KEY`, `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_REDIRECT_URI`, `LINKEDIN_API_VERSION`, `DATABASE_URL`, `ENABLE_SCHEDULER`, `SCHEDULE_HOUR`, `SCHEDULE_MINUTE`, and `APP_TIMEZONE`. Set `LINKEDIN_REDIRECT_URI` to `https://YOUR-SERVICE.onrender.com/auth/linkedin/callback` and register that exact URL in LinkedIn Developer Portal.
+- Build command: `pip install -r L_requirements.txt`
+- Start command: `uvicorn app:app --host 0.0.0.0 --port $PORT`
+- Keep your existing `APP_ENCRYPTION_KEY`, LinkedIn credentials and database settings unchanged.
+- Set AI provider keys in Render Environment, never in source files or Git.
+- The current image-generation route still uses the OpenAI Images API and is optional/paid. This package does not silently switch image providers.
+- Add a persistent disk for `content_studio.db` if using SQLite and for `static/generated` if you want generated images to survive deploys/restarts. PostgreSQL is preferable for production.
 
-The included SQLite default is for local testing only. Render's ephemeral filesystem is not durable; use managed PostgreSQL and set `DATABASE_URL` before relying on saved drafts or LinkedIn tokens. Add dashboard authentication before sharing the service publicly.
+## Upgrade safety
+
+Back up your existing database before deployment. The app adds tables for editorial ideas and post revisions, and safely adds metadata columns to the existing `posts` table. It does not intentionally delete or recreate existing posts or LinkedIn accounts.
+
+## Important limitations
+
+- Public RSS discovery is a discovery aid, not a verification engine. Review the original source and verify facts before publishing.
+- Educational ideas are generated as prompts. Check technical details, examples and version-sensitive syntax before publishing.
+- Startup growth, funding, revenue and brand-performance claims must be verified from original sources; do not infer private metrics from headlines.
+- ATS coverage remains limited to supported Greenhouse, Lever and Ashby public boards. Workday and custom ATS crawling are not implemented.
+- Publishing remains human-approved; no automatic LinkedIn publishing was added.
