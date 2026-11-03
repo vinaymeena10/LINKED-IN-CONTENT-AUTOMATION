@@ -1601,16 +1601,22 @@ def generate_post_image(post_id: int):
     return RedirectResponse("/?notice=Post+image+generated", status_code=303)
 
 
-# Editorial taxonomy: the same topic can be explored through different domains.
+# Legacy category registry retained only for backwards-compatible routes.
+# Discovery itself is open-ended: no predefined subject/topic/angle bank is used.
 EDITORIAL_TAXONOMY = {
- "data_science": {"label":"Data Science & Analytics","topics":["Data analysis","SQL & databases","Statistics & experimentation","Business analytics","Data engineering","Forecasting & optimisation","Dashboards & storytelling"],"angles":["SQL interview challenge","Explain a concept with an example","Practical project walkthrough","Real-world business case","Industry development decoded","Career skills roadmap"]},
- "ai_research": {"label":"AI, ML & Research","topics":["Machine learning","Deep learning","Neural networks","NLP","LLMs & generative AI","Computer vision","AI research & benchmarks","AI tools & models","AI ethics & governance"],"angles":["Research paper decoded","Model comparison","Build it step by step","Concept explained simply","New breakthrough decoded","Business application","Myth versus reality"]},
- "agentic_ai": {"label":"Agentic AI & Automation","topics":["AI agents","Multi-agent systems","Agent frameworks","Tool calling & MCP","Agent memory","Coding agents","Enterprise agents","Agent evaluation","Agent security"],"angles":["Build an agent tutorial","Architecture breakdown","Framework comparison","Enterprise use case","New product decoded","Security failure analysis"]},
- "business_decoding": {"label":"Startup & Business Decoding","topics":["Emerging startups","Newly funded startups","Founder stories","Business models","Unit economics","Venture capital","Product innovation","Market disruption","Startup failures","Competitor analysis"],"angles":["Startup spotlight","How it makes money","Why it is growing","Founder decision decoded","Competitor versus incumbent","Funding round explained","What could go wrong"]},
- "marketing": {"label":"Branding & Marketing","topics":["Emerging brands","Brand positioning & identity","Campaigns & advertisements","Viral marketing","Consumer psychology","Growth marketing","Influencer marketing","Product launches","Promotions & pricing","Brand crises & rebranding","Martech & AI marketing"],"angles":["Campaign decoded","Brand strategy breakdown","Consumer psychology explained","Creative strategy analysis","Promotion mechanics","Competitor positioning","What marketers can learn"]},
- "cloud_automation": {"label":"Cloud, Technology & Automation","topics":["AWS, Azure & GCP","Cloud architecture","DevOps & CI/CD","Docker & Kubernetes","Data platforms","APIs & integrations","Cybersecurity","Open source releases","Automation workflows"],"angles":["Hands-on tutorial","Architecture explained","Tool comparison","Pricing decoded","Product release analysis","Implementation case study"]},
- "careers": {"label":"Technology Careers","topics":["Career roadmaps","SQL & Python interviews","Machine learning interviews","System design","Portfolio projects","Hiring trends","Skills intelligence","Resume & LinkedIn","Career transitions"],"angles":["Interview question with solution","30-day learning roadmap","Portfolio project brief","Skill gap analysis","Hiring trend decoded","Career myth versus reality"]},
- "news": {"label":"News & Current Affairs","topics":["Artificial intelligence news","Technology company announcements","Science and research breakthroughs","Startup and funding news","Cybersecurity incidents and policy","Economy and business developments","Product launches and updates","Regulation and public policy","Global events with technology impact"],"angles":["What happened and what is verified","Why this development matters","Second-order implications","What the headline misses","Who benefits and who is affected","Fact-check and context","What happens next"]}
+    key: {"label": label} for key, label in {
+        "data_science": "Data Science & Analytics",
+        "ai_research": "AI & Machine Learning",
+        "agentic_ai": "Agentic AI",
+        "business_decoding": "Startups & Business",
+        "marketing": "Branding & Marketing",
+        "cloud_automation": "Cloud & Technology",
+        "product_innovation": "Product & Innovation",
+        "finance_business": "Finance & Business",
+        "careers": "Technology Careers",
+        "industry_news": "Industry & Tech News",
+        "news": "News & Current Affairs",
+    }.items()
 }
 CONTENT_DOMAINS = {
  "education":"Education & learning", "industry_news":"Industry news & announcements", "research":"Research & publications", "business":"Business intelligence & case studies", "emerging_players":"Emerging startups & brands", "tools":"Tools, tutorials & implementation", "careers":"Careers & hiring", "opinion":"Opinion, debate & thought leadership", "media":"Campaigns, media & creative work", "evergreen":"Evergreen explainers"
@@ -1719,108 +1725,246 @@ def _clip_linkedin_post(text_value, limit):
     return candidate.rstrip(" ,;:-")
 
 
+def _category_contract(label):
+    """Describe the boundary of a category without enumerating its subject taxonomy."""
+    if label == "News & Current Affairs":
+        return (
+            "CATEGORY BOUNDARY: This is journalism/current-affairs discovery. Generate real-world "
+            "news beats, public issues, events, policy questions, economic developments, social "
+            "changes, science developments, international affairs and consequential business "
+            "developments. A suggestion must be something a journalist, analyst or informed reader "
+            "could investigate as an actual development or public issue. Do NOT propose products, "
+            "apps, platforms, prototypes, engineering projects, newsroom tools, hypothetical "
+            "technology solutions or startup concepts. Do not turn the category into 'technology "
+            "for newsrooms'. Do not invent a breaking event or claim something happened; at the "
+            "subtopic/track stage, name a subject or question that can later be researched."
+        )
+    return (
+        f"CATEGORY BOUNDARY: Interpret '{label}' as a real, established field of knowledge and "
+        "practice. Discover subjects that genuinely belong to this field. Do not drift into an "
+        "adjacent category merely because it sounds innovative. Do not invent technical terms, "
+        "research areas, products or combinations to appear creative. Cross-disciplinary topics "
+        "are acceptable only when the connection is meaningful and the selected category remains "
+        "the clear centre of gravity."
+    )
+
+
+def _stage_contract(stage, label, subtopic="", track=""):
+    boundary = _category_contract(label)
+    if stage == "subtopics":
+        return (
+            f"Discover 10 subtopics within the broad category '{label}'. {boundary} "
+            "Think independently across the field: identify important established concepts, "
+            "foundational questions, real professional problems, practical applications, "
+            "misconceptions, consequential developments and worthwhile emerging ideas. Decide "
+            "which directions are genuinely worth exploring; do not follow a fixed taxonomy or "
+            "prewritten list. Each result must be a concise, recognisable subject label, not a "
+            "long project proposal, headline, solution pitch or sentence containing a tutorial. "
+            "Use plain professional language. Mix accessible and advanced subjects only where "
+            "they naturally belong."
+        )
+    if stage == "tracks":
+        return (
+            f"For category '{label}', develop 8 genuinely different ways to explore the selected "
+            f"subtopic '{subtopic}'. {boundary} Think from the substance of this exact subject, "
+            "not from a generic menu of learning formats. Identify its most important questions, "
+            "underlying mechanisms, practical decisions, failure modes, debates, applications, "
+            "comparisons or unresolved issues. Return concise, distinct exploration directions. "
+            "Do not simply rename the subtopic, and do not force every subject into beginner, "
+            "advanced, tutorial, interview and project buckets."
+        )
+    return (
+        f"For category '{label}', selected subtopic '{subtopic}', and selected direction '{track}', "
+        "create 8 specific LinkedIn content ideas. Derive each idea from a distinct insight, "
+        "question, tension, misconception, practical problem or evidence-backed claim that "
+        "naturally follows from the selected subject. Each must have a clear thesis and real "
+        "reader value. Avoid generic listicles, artificial contrarianism, invented statistics, "
+        "fake personal experiences and superficial rewordings. For News & Current Affairs, ideas "
+        "must concern real-world developments or public issues and must not become proposals for "
+        "new products or technology projects; factual claims and recency must be verified during "
+        "research before drafting. Return objects with title and a 2-3 sentence summary explaining "
+        "the actual intellectual substance."
+    )
+
+
+def _parse_candidate_list(result, field):
+    values = result.get(field, []) if isinstance(result, dict) else []
+    if not isinstance(values, list):
+        return []
+    parsed=[]
+    for value in values:
+        if field == "ideas":
+            if not isinstance(value, dict) or not str(value.get("title", "")).strip():
+                continue
+            parsed.append({"title": str(value["title"]).strip()[:500],
+                           "summary": str(value.get("summary", "")).strip()[:2500]})
+        elif isinstance(value, str) and value.strip():
+            parsed.append(value.strip()[:180])
+    return parsed
+
+
+def _independent_semantic_review(label, stage, candidates, subtopic="", track=""):
+    """Second model call: independently judge category fit and conceptual quality."""
+    if not candidates:
+        return []
+    boundary = _category_contract(label)
+    payload = json.dumps(candidates, ensure_ascii=False)
+    prompt = f"""You are an independent, demanding editorial subject-matter reviewer. You did NOT generate these candidates. Review them critically.
+
+Selected category: {label}
+Generation stage: {stage}
+Selected parent subject: {subtopic or 'None'}
+Selected parent direction: {track or 'None'}
+
+{boundary}
+
+Review criteria:
+1. CATEGORY FIT: Does the candidate genuinely belong to the selected category? Reject category drift.
+2. REALITY: Is it a real, coherent, understandable subject or question rather than invented jargon or a speculative product pitch?
+3. LEVEL: Is its depth appropriate to its wording and context? Advanced is welcome; needless complexity is not.
+4. USEFULNESS: Could a curious professional or learner develop meaningful content from it?
+5. DISTINCTNESS: Is it materially different from the other accepted candidates and the parent subject?
+6. STAGE FIT: A subtopic is a concise subject area; a track is a meaningful exploration direction; an idea is a specific editorial thesis.
+
+Do not reward sophistication, length or novelty for their own sake. Reject candidates that are merely adjacent to the category. For News & Current Affairs, reject invented newsroom technologies, apps, platforms, prototypes, engineering concepts and hypothetical solutions. Accept actual public issues, events, policy, society, economy, science, international affairs and consequential business developments. Do not require a specific breaking-news claim at the subtopic stage.
+
+Candidates:
+{payload}
+
+Return ONLY JSON: {{"accepted_indices":[0,2],"rejected":[{{"index":1,"reason":"..."}}]}}.
+Use zero-based indices. Be selective but fair: retain every candidate that clearly passes. If fewer than 5 pass, return the valid ones; the generator will create replacements. No markdown."""
+    try:
+        review = _ai_json(prompt)
+        indices = review.get("accepted_indices", []) if isinstance(review, dict) else []
+        accepted=[]
+        seen=set()
+        for idx in indices:
+            if isinstance(idx, int) and 0 <= idx < len(candidates) and idx not in seen:
+                accepted.append(candidates[idx]); seen.add(idx)
+        return accepted
+    except Exception:
+        # Fail closed for News category; for other categories also avoid showing
+        # unreviewed candidates because independent evaluation is a core quality gate.
+        return []
+
+
 @app.post("/discover/generate-stage")
 async def discover_generate_stage(request: Request):
     payload=await request.json()
     stage=(payload.get("stage") or "").strip()
     category=(payload.get("category") or "").strip()
-    if category not in DYNAMIC_CATEGORIES: raise HTTPException(400,"Choose a valid main category")
+    if category not in DYNAMIC_CATEGORIES:
+        raise HTTPException(400,"Choose a valid main category")
     label=DYNAMIC_CATEGORIES[category]
     max_characters=max(300,min(3000,int(payload.get("max_characters") or 1800)))
     subtopic=(payload.get("subtopic") or "").strip()[:180]
     track=(payload.get("track") or "").strip()[:180]
     if stage=="subtopics":
-        context_key=category
-        field="subtopics"
-        instruction=f"For the broad category '{label}', propose 10 genuinely distinct, high-value subtopics. Include conceptual learning, advanced practice, real-world applications, interviews and important current developments where appropriate. Avoid generic labels and avoid repeating any previous suggestions."
+        context_key=category; field="subtopics"
     elif stage=="tracks":
         if not subtopic: raise HTTPException(400,"Choose a subtopic")
-        context_key=f"{category}|{_normalise_generation_text(subtopic)}"
-        field="tracks"
-        instruction=f"For category '{label}' and subtopic '{subtopic}', propose 8 distinct next-step tracks. They must be meaningfully different from one another and from the excluded previous tracks. Explore different intellectual lenses: foundations, advanced mechanics, implementation, debugging, evaluation, interview reasoning, business impact, research critique, practical projects or other genuinely relevant directions."
+        context_key=f"{category}|{_normalise_generation_text(subtopic)}"; field="tracks"
     elif stage=="ideas":
         if not subtopic or not track: raise HTTPException(400,"Choose a subtopic and track")
-        context_key=f"{category}|{_normalise_generation_text(subtopic)}|{_normalise_generation_text(track)}"
-        field="ideas"
-        instruction=f"For category '{label}', subtopic '{subtopic}', and track '{track}', create 8 highly specific, original LinkedIn content ideas. Each must have a distinct thesis and teach something concrete or offer a defensible insight. Do not produce generic listicles, recycled hooks, invented statistics or near-duplicates. Return objects with title and summary (2-3 sentences explaining the actual intellectual substance)."
+        context_key=f"{category}|{_normalise_generation_text(subtopic)}|{_normalise_generation_text(track)}"; field="ideas"
     else:
         raise HTTPException(400,"Unknown generation stage")
 
-    # Persistent novelty memory: exact repeats are blocked across all past runs;
-    # recent examples are also supplied to the model to reduce semantic repeats.
+    instruction=_stage_contract(stage,label,subtopic,track)
     with SessionLocal() as db:
         previous=[row.value for row in db.query(DiscoveryGeneration).filter_by(stage=stage,category=category,context_key=context_key).order_by(desc(DiscoveryGeneration.created_at)).all()]
-    excluded="\n".join(f"- {v}" for v in previous[:100]) or "- None yet"
+    # The memory prevents recycling; it is not a topic source or a taxonomy.
+    excluded="\n".join(f"- {v}" for v in previous[:80]) or "- None yet"
     final_values=[]
     errors=[]
-    for attempt in range(4):
-        nonce=secrets.token_hex(12)
+    for attempt in range(5):
+        nonce=secrets.token_hex(16)
+        perspective_prompt=f"""Act as an independent subject-matter thinker for a high-quality editorial research desk.
+Selected category: {label}
+Stage: {stage}
+Selected subtopic: {subtopic or 'None'}
+Selected track: {track or 'None'}
+
+Before generating, privately reason through the actual boundaries and intellectual landscape of this field. Explore multiple genuinely relevant perspectives, identify important knowledge gaps and useful questions, then choose a fresh direction for this run. Do not expose chain-of-thought. Return a compact discovery brief with 4-6 distinct exploration territories and one sentence explaining why each is relevant. Do not name a fixed taxonomy and do not invent terminology.
+
+{instruction}
+
+Freshness nonce: {nonce}
+Prior outputs to avoid (do not paraphrase them):
+{excluded}
+
+Return ONLY JSON: {{"exploration_territories":[{{"territory":"...","rationale":"..."}}]}}"""
         schema='{"title":"...","summary":"..."}' if field=="ideas" else '"..."'
-        prompt=(
-            "You are an unusually creative, rigorous editorial research strategist. "
-            + instruction
-            + f"\n\nNOVELTY MEMORY — DO NOT REPEAT OR PARAPHRASE THESE PRIOR OUTPUTS:\n{excluded}"
-            + f"\n\nThis is generation run {nonce}. Treat it as a fresh creative brief. Explore different conceptual territory, not just synonyms."
-            + f"\nThe eventual LinkedIn post may contain at most {max_characters} characters. Keep each idea focused enough to support that limit."
-            + f"\nReturn ONLY valid JSON in this exact shape: {{\"{field}\": [{schema}]}}. No markdown fences."
-        )
         try:
-            result=_ai_json(prompt)
-            values=result.get(field,[])
-            if not isinstance(values,list) or not values:
-                raise ValueError("AI returned no options")
+            brief=_ai_json(perspective_prompt)
+            territories=brief.get("exploration_territories",[]) if isinstance(brief,dict) else []
+            if not isinstance(territories,list) or not territories:
+                raise ValueError("AI did not produce a discovery brief")
+            generation_prompt=f"""You are a creative but rigorous subject-matter researcher and editorial strategist. Generate candidates from the discovery brief below. Think independently; do not use a predefined subject list.
+
+Selected category: {label}
+Stage: {stage}
+Selected subtopic: {subtopic or 'None'}
+Selected track: {track or 'None'}
+
+{instruction}
+
+AI-generated exploration brief:
+{json.dumps(territories,ensure_ascii=False)}
+
+Generate {10 if field == 'subtopics' else 8} candidates. Each candidate must be understandable, genuinely relevant, useful and conceptually real. Be original through the insight or direction, not through fabricated terminology. For subtopics, return concise subject names only; do not append a project description after a colon. For tracks, return concise exploration directions. For ideas, return a title and substantive 2-3 sentence summary.
+
+NOVELTY MEMORY — avoid exact repeats, close paraphrases and the same underlying idea:
+{excluded}
+
+Freshness nonce: {nonce}
+The eventual post may contain at most {max_characters} characters; keep each idea focused enough for that limit.
+Return ONLY valid JSON in this exact shape: {{"{field}":[{schema}]}}. No markdown."""
+            raw=_parse_candidate_list(_ai_json(generation_prompt),field)
             candidates=[]
-            for value in values:
-                if field=="ideas":
-                    if not isinstance(value,dict) or not value.get("title"): continue
-                    title=str(value["title"]).strip()[:500]
-                    summary=str(value.get("summary","")).strip()[:2500]
-                    candidate={"title":title,"summary":summary}
-                    compare_text=title
-                else:
-                    title=str(value).strip()[:180]
-                    if not title: continue
-                    candidate=title
-                    compare_text=title
-                if any(_novelty_similarity(compare_text, _normalise_generation_text(old)) >= 0.78 for old in previous):
+            for value in raw:
+                title=value["title"] if isinstance(value,dict) else value
+                compare_text=title
+                if any(_novelty_similarity(compare_text,_normalise_generation_text(old)) >= 0.62 for old in previous):
                     continue
-                if any(_novelty_similarity(compare_text, _normalise_generation_text(x["title"] if isinstance(x,dict) else x)) >= 0.78 for x in candidates):
+                if any(_novelty_similarity(compare_text,_normalise_generation_text(x["title"] if isinstance(x,dict) else x)) >= 0.62 for x in candidates):
                     continue
-                candidates.append(candidate)
-            if candidates:
-                final_values=candidates
-                break
-            errors.append(f"Attempt {attempt+1}: all suggestions repeated prior ideas")
+                candidates.append(value)
+            reviewed=_independent_semantic_review(label,stage,candidates,subtopic,track)
+            if reviewed:
+                final_values=reviewed
+                # Retry only when the evaluator left too few useful options.
+                if len(final_values) >= (6 if field == "subtopics" else 5):
+                    break
+            errors.append(f"Attempt {attempt+1}: evaluator retained {len(reviewed)} candidates")
         except Exception as exc:
-            errors.append(f"Attempt {attempt+1}: {str(exc)[:180]}")
+            errors.append(f"Attempt {attempt+1}: {str(exc)[:160]}")
 
     if not final_values:
-        raise HTTPException(502,"The model could not produce sufficiently new suggestions after four attempts. Try again; the existing suggestions have not been repeated.")
+        raise HTTPException(502,"The AI could not produce enough relevant, independently reviewed suggestions. Please regenerate; no unreviewed topics were shown.")
 
     try:
         with SessionLocal() as db:
             if field=="ideas":
                 saved=[]
                 for value in final_values[:8]:
-                    title=value["title"]
-                    summary=value["summary"]
+                    title=value["title"]; summary=value["summary"]
                     if not _remember_discovery_value(db,stage,category,context_key,title):
                         continue
                     idea=EditorialIdea(category=category,topic=subtopic[:80],content_domain="education",editorial_angle="explain_why_it_matters",title=title,summary=summary+f"\n\nSelected track: {track}",source_name="AI-generated editorial idea",audience="professionals",difficulty="intermediate",status="idea",max_characters=max_characters)
-                    db.add(idea); db.flush()
-                    saved.append({"id":idea.id,"title":title,"summary":summary})
+                    db.add(idea); db.flush(); saved.append({"id":idea.id,"title":title,"summary":summary})
                 final_values=saved
             else:
                 for value in final_values:
                     _remember_discovery_value(db,stage,category,context_key,value)
             db.commit()
         if not final_values:
-            raise HTTPException(502,"All generated ideas were already in your library. Click again for a fresh set.")
+            raise HTTPException(502,"These suggestions already exist in your library. Regenerate for a different discovery direction.")
         return JSONResponse({field:final_values,"max_characters":max_characters,"generation_id":secrets.token_hex(8)})
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(502,f"Could not save the new suggestions: {str(exc)[:250]}")
+        raise HTTPException(502,f"Could not save the reviewed suggestions: {str(exc)[:220]}")
 
 @app.get("/topics", response_class=HTMLResponse)
 def topic_library(request: Request, notice: str = "", q: str = ""):
