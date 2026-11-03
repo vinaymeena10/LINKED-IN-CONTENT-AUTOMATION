@@ -786,6 +786,11 @@ NON-NEGOTIABLE WRITING RULES:
 - Use 2-4 relevant hashtags, only if they add value.
 - {source_line_instruction}
 - Return only the finished LinkedIn post.
+- Before finalising, silently score the draft for factual support, originality, specificity,
+  conceptual depth, audience value and naturalness. Rewrite weak or generic passages.
+- A strong post must contain at least one concrete explanation, example, mechanism,
+  useful distinction or defensible inference—not merely motivational commentary.
+- Keep the entire post below 3,000 characters, including spaces and hashtags.
 
 CATEGORY: {category}
 SELECTED TOPIC: {topic_name}
@@ -1633,76 +1638,197 @@ DYNAMIC_CATEGORIES = {
  "industry_news": "Industry & Tech News",
 }
 
+def _extract_json_object(raw: str):
+    """Parse model JSON even when a provider wraps it in fences or brief prose."""
+    raw = (raw or "").strip()
+    raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.I)
+    raw = re.sub(r"\s*```$", "", raw)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(raw):
+        if char == "{":
+            try:
+                value, _ = decoder.raw_decode(raw[index:])
+                if isinstance(value, dict):
+                    return value
+            except json.JSONDecodeError:
+                continue
+    raise ValueError("The AI provider did not return valid JSON.")
+
+
 def _ai_json(prompt):
-    """Use configured text providers in the same fallback order as drafting."""
-    errors=[]
-    key=os.getenv("GEMINI_API_KEY", "").strip()
-    if key:
+    """Use configured providers in order; tolerate common JSON wrapping errors."""
+    errors = []
+    providers = [
+        ("Gemini", bool(os.getenv("GEMINI_API_KEY", "").strip())),
+        ("Groq", bool(os.getenv("GROQ_API_KEY", "").strip())),
+        ("Cerebras", bool(os.getenv("CEREBRAS_API_KEY", "").strip())),
+    ]
+    for provider, configured in providers:
+        if not configured:
+            errors.append(f"{provider}: API key not configured")
+            continue
         try:
-            with genai.Client(api_key=key) as client:
-                r=client.models.generate_content(model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"), contents=prompt)
-            raw=(r.text or "").strip()
-            raw=re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I)
-            return json.loads(raw)
-        except Exception as e: errors.append(f"Gemini: {e}")
-    key=os.getenv("GROQ_API_KEY", "").strip()
-    if key:
-        try:
-            r=Groq(api_key=key).chat.completions.create(model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),messages=[{"role":"user","content":prompt}],temperature=0.65,max_tokens=1600)
-            raw=(r.choices[0].message.content or "").strip(); raw=re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I)
-            return json.loads(raw)
-        except Exception as e: errors.append(f"Groq: {e}")
-    key=os.getenv("CEREBRAS_API_KEY", "").strip()
-    if key:
-        try:
-            r=Cerebras(api_key=key).chat.completions.create(model=os.getenv("CEREBRAS_MODEL", "qwen-3-235b-a22b-instruct"),messages=[{"role":"user","content":prompt}],temperature=0.65,max_completion_tokens=1600)
-            raw=(r.choices[0].message.content or "").strip(); raw=re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I)
-            return json.loads(raw)
-        except Exception as e: errors.append(f"Cerebras: {e}")
-    raise RuntimeError("AI providers unavailable or returned invalid JSON. " + " | ".join(errors))
+            if provider == "Gemini":
+                with genai.Client(api_key=os.getenv("GEMINI_API_KEY", "").strip()) as client:
+                    response = client.models.generate_content(
+                        model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
+                        contents=prompt,
+                    )
+                raw = response.text or ""
+            elif provider == "Groq":
+                response = Groq(api_key=os.getenv("GROQ_API_KEY", "").strip()).chat.completions.create(
+                    model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.55,
+                    max_tokens=2400,
+                    response_format={"type": "json_object"},
+                )
+                raw = response.choices[0].message.content or ""
+            else:
+                response = Cerebras(api_key=os.getenv("CEREBRAS_API_KEY", "").strip()).chat.completions.create(
+                    model=os.getenv("CEREBRAS_MODEL", "qwen-3-235b-a22b-instruct"),
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.55,
+                    max_completion_tokens=2400,
+                    response_format={"type": "json_object"},
+                    stream=False,
+                )
+                raw = response.choices[0].message.content or ""
+            return _extract_json_object(raw)
+        except Exception as exc:
+            errors.append(f"{provider}: {str(exc)[:220]}")
+            print(f"{provider} structured generation failed: {exc}")
+    raise RuntimeError("All configured AI providers failed. " + " | ".join(errors))
+
+
+DYNAMIC_CATEGORIES = {
+    "data_science": "Data Science & Analytics",
+    "ai_research": "AI & Machine Learning",
+    "agentic_ai": "Agentic AI",
+    "business_decoding": "Startups & Business",
+    "marketing": "Branding & Marketing",
+    "cloud_automation": "Cloud & Technology",
+    "product_innovation": "Product & Innovation",
+    "finance_business": "Finance & Business",
+    "careers": "Technology Careers",
+    "industry_news": "Industry & Tech News",
+}
+
+
+def _editorial_reasoning_context(category_label):
+    return f"""You are the research director and editorial strategist of a premium professional publication.
+The selected category is: {category_label}.
+Think like a subject-matter expert, teacher, researcher and sharp editor—not a social-media template generator.
+Explore the category broadly: foundational concepts, advanced methods, practical implementation,
+case studies, interviews, business applications, debates, failures, trade-offs and emerging work.
+Do not assume every category is about breaking news. Include education and interview preparation
+when relevant. Prefer specific concepts over vague umbrella labels. Avoid duplicate ideas that
+only change wording. Do not invent studies, statistics, product features or current events.
+Return concise, useful options that a knowledgeable professional would genuinely want to explore."""
+
 
 @app.post("/discover/generate-stage")
 async def discover_generate_stage(request: Request):
-    payload=await request.json()
-    stage=(payload.get("stage") or "").strip()
-    category=(payload.get("category") or "").strip()
-    if category not in DYNAMIC_CATEGORIES: raise HTTPException(400,"Choose a valid main category")
-    label=DYNAMIC_CATEGORIES[category]
-    if stage=="subtopics":
-        instruction=f"For the broad category '{label}', propose 8 diverse, useful subtopics spanning learning, practical work, interviews, industry/business applications and current developments where relevant. Avoid generic labels."
-        field="subtopics"
-    elif stage=="tracks":
-        subtopic=(payload.get("subtopic") or "").strip()[:180]
-        if not subtopic: raise HTTPException(400,"Choose a subtopic")
-        instruction=f"For category '{label}' and subtopic '{subtopic}', propose 6 distinct learning/content tracks or angles. Mix fundamentals, advanced concepts, practical implementation, interview preparation, real-world cases and critical analysis as relevant."
-        field="tracks"
-    elif stage=="ideas":
-        subtopic=(payload.get("subtopic") or "").strip()[:180]
-        track=(payload.get("track") or "").strip()[:180]
-        if not subtopic or not track: raise HTTPException(400,"Choose a subtopic and track")
-        instruction=f"For category '{label}', subtopic '{subtopic}', and track '{track}', create 6 highly specific LinkedIn content ideas. Each should teach something or offer a defensible insight. Avoid generic news headlines, invented statistics and repetitive ideas. Return objects with title and summary (2-3 sentences describing what the post will actually explain)."
-        field="ideas"
-    else: raise HTTPException(400,"Unknown generation stage")
-    prompt=("You are a rigorous editorial taxonomy designer for a professional LinkedIn content studio. "+instruction+f" Return ONLY valid JSON in this exact shape: {{\"{field}\": ["+("{\"title\":\"...\",\"summary\":\"...\"}" if field=="ideas" else "\"...\"")+ "]}}. No markdown fences.")
+    payload = await request.json()
+    stage = (payload.get("stage") or "").strip()
+    category = (payload.get("category") or "").strip()
+    if category not in DYNAMIC_CATEGORIES:
+        raise HTTPException(400, "Choose a valid main category")
+    label = DYNAMIC_CATEGORIES[category]
+    context = _editorial_reasoning_context(label)
+
+    if stage == "subtopics":
+        field = "subtopics"
+        instruction = """Generate 10–12 genuinely distinct subtopics. Cover the category's important
+knowledge areas, practical skills, real-world applications, interview/learning opportunities,
+and relevant industry developments. Each item must be a clear, selectable subject—not a post title.
+Avoid generic options such as 'latest trends' unless made specific."""
+    elif stage == "tracks":
+        subtopic = (payload.get("subtopic") or "").strip()[:180]
+        if not subtopic:
+            raise HTTPException(400, "Choose a subtopic")
+        field = "tracks"
+        instruction = f"""For subtopic '{subtopic}', generate 8 distinct tracks. Each track should represent
+an actual direction of exploration, such as fundamentals, advanced theory, implementation,
+interview preparation, hands-on projects, case studies, evaluation, or critical debate—choose
+only those that fit this subject. Make them specific to this subtopic, not a generic universal list."""
+    elif stage == "ideas":
+        subtopic = (payload.get("subtopic") or "").strip()[:180]
+        track = (payload.get("track") or "").strip()[:180]
+        if not subtopic or not track:
+            raise HTTPException(400, "Choose a subtopic and track")
+        field = "ideas"
+        instruction = f"""For subtopic '{subtopic}' and track '{track}', generate 8 original, specific
+content concepts suitable for a high-quality LinkedIn post. Return objects with title, summary,
+editorial_thesis and reader_value. Each concept must have a distinct argument or learning outcome.
+Include concrete mechanisms, examples, technical depth or a defensible point of view where relevant.
+Do not generate generic listicles, empty motivational claims, clickbait or fabricated personal stories.
+Summaries should explain what the writer will actually teach or reason through."""
+    else:
+        raise HTTPException(400, "Unknown generation stage")
+
+    if field == "ideas":
+        shape = '{"ideas":[{"title":"...","summary":"...","editorial_thesis":"...","reader_value":"..."}]}'
+    else:
+        shape = '{"' + field + '":["..."]}'
+    prompt = f"{context}\n\nTASK: {instruction}\nReturn ONLY valid JSON in this shape: {shape}"
     try:
-        result=_ai_json(prompt)
-        values=result.get(field,[])
-        if not isinstance(values,list) or not values: raise ValueError("AI returned no options")
-        if field!="ideas": values=[str(v).strip()[:180] for v in values if str(v).strip()][:10]
+        result = _ai_json(prompt)
+        values = result.get(field, [])
+        if not isinstance(values, list) or not values:
+            raise ValueError("AI returned no options")
+        if field != "ideas":
+            seen = set()
+            clean_values = []
+            for value in values:
+                value = re.sub(r"\s+", " ", str(value)).strip()[:180]
+                key = value.casefold()
+                if value and key not in seen:
+                    seen.add(key)
+                    clean_values.append(value)
+            values = clean_values[:12]
         else:
-            clean=[]
+            clean = []
+            seen_titles = set()
             with SessionLocal() as db:
-                for value in values[:8]:
-                    if not isinstance(value,dict) or not value.get("title"): continue
-                    title=str(value["title"]).strip()[:500]
-                    summary=str(value.get("summary","")).strip()[:2500]
-                    exists=db.query(EditorialIdea).filter_by(category=category,topic=subtopic,title=title).first()
-                    if exists: clean.append({"id":exists.id,"title":exists.title,"summary":exists.summary}); continue
-                    idea=EditorialIdea(category=category,topic=subtopic[:80],content_domain="education",editorial_angle="explain_why_it_matters",title=title,summary=summary+f"\n\nSelected track: {track}",source_name="AI-generated editorial idea",audience="professionals",difficulty="intermediate",status="idea")
-                    db.add(idea); db.flush(); clean.append({"id":idea.id,"title":title,"summary":summary})
+                for value in values[:10]:
+                    if not isinstance(value, dict) or not value.get("title"):
+                        continue
+                    title = re.sub(r"\s+", " ", str(value["title"])).strip()[:500]
+                    if title.casefold() in seen_titles:
+                        continue
+                    seen_titles.add(title.casefold())
+                    summary = str(value.get("summary", "")).strip()[:2500]
+                    thesis = str(value.get("editorial_thesis", "")).strip()[:1200]
+                    reader_value = str(value.get("reader_value", "")).strip()[:1200]
+                    exists = db.query(EditorialIdea).filter_by(category=category, topic=subtopic, title=title).first()
+                    if exists:
+                        clean.append({"id": exists.id, "title": exists.title, "summary": exists.summary})
+                        continue
+                    complete_summary = summary
+                    if thesis:
+                        complete_summary += "\n\nEditorial thesis: " + thesis
+                    if reader_value:
+                        complete_summary += "\n\nReader value: " + reader_value
+                    complete_summary += "\n\nSelected track: " + track
+                    idea = EditorialIdea(
+                        category=category, topic=subtopic[:80], content_domain="education",
+                        editorial_angle="explain_why_it_matters", title=title,
+                        summary=complete_summary, source_name="AI-generated editorial idea",
+                        audience="professionals", difficulty="intermediate", status="idea",
+                    )
+                    db.add(idea)
+                    db.flush()
+                    clean.append({"id": idea.id, "title": title, "summary": summary})
                 db.commit()
-            values=clean
-        return JSONResponse({field:values})
+            values = clean
+        if not values:
+            raise ValueError("No usable options were returned by the AI provider")
+        return JSONResponse({field: values})
     except Exception as exc:
         raise HTTPException(502, f"Could not generate the next step: {str(exc)[:350]}")
 
