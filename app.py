@@ -732,6 +732,25 @@ only where supported by the source. Distinguish a campaign launch from evidence
 of campaign success. Never invent reach, conversions, sales lift or ROI.
 """
 
+    if dynamic_authoring:
+        author_settings = (
+            "Choose the format, tone, point of view, opening, depth and length that best serve "
+            "THIS specific idea and its audience. Do not follow a universal template. For an "
+            "educational topic, teach the underlying concept accurately and use a worked example "
+            "or exercise where useful. For interview preparation, state the question, reason "
+            "through the solution and explain common mistakes. For a case study, distinguish "
+            "known facts from interpretation. For news, verify the announcement and explain "
+            "its implications. Avoid forced first-person voice, generic CTAs and irrelevant hashtags."
+        )
+    else:
+        author_settings = (
+            f"Format: {post_format}. {format_guidance}\\n"
+            f"Tone: {tone}. {tone_guidance}\\n"
+            f"Voice: {voice}. {voice_guidance}\\n"
+            f"Analysis depth: {depth}. {depth_guidance}\\n"
+            f"Length: {length_guidance}."
+        )
+
     prompt = f"""
 You are writing as a thoughtful, technically literate professional who has a
 point of view. You are NOT a news summariser, press-release writer or generic
@@ -748,7 +767,7 @@ If the source is too thin to support a meaningful inference, say less rather
 than inventing insight. Do not treat a headline or promotional claim as proof.
 
 AUTHOR SETTINGS:
-{("Choose the format, tone, point of view, opening, depth and length that best serve THIS specific idea and its audience. Do not follow a universal template. For an educational topic, teach the underlying concept accurately and use a worked example or exercise where useful. For interview preparation, state the question, reason through the solution and explain common mistakes. For a case study, distinguish known facts from interpretation. For news, verify the announcement and explain its implications. Avoid forced first-person voice, generic CTAs and irrelevant hashtags.") if dynamic_authoring else f"Format: {post_format}. {format_guidance}\nTone: {tone}. {tone_guidance}\nVoice: {voice}. {voice_guidance}\nAnalysis depth: {depth}. {depth_guidance}\nLength: {length_guidance}."}
+{author_settings}
 
 NON-NEGOTIABLE WRITING RULES:
 - Do not merely paraphrase the article. A reader should get an idea, not just a recap.
