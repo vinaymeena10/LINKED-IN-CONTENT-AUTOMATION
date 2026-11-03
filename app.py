@@ -12,7 +12,7 @@ from email.utils import parsedate_to_datetime
 load_dotenv()
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Request, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from google import genai
 from groq import Groq
@@ -59,10 +59,11 @@ CATEGORIES = {
 
 DISPLAY_CATEGORIES = {
     **CATEGORIES,
-    "marketing": {
-        "label": "Legacy marketing content",
-        "weight": 0,
-    },
+    "marketing": {"label": "Branding & Marketing", "weight": 0},
+    "agentic_ai": {"label": "Agentic AI", "weight": 0},
+    "product_innovation": {"label": "Product & Innovation", "weight": 0},
+    "finance_business": {"label": "Finance & Business", "weight": 0},
+    "industry_news": {"label": "Industry & Tech News", "weight": 0},
 }
 
 # User-selectable research topics. Each topic maps to a broad category for
@@ -672,12 +673,16 @@ def create_draft(item):
     category = CATEGORIES.get(item["category"], DISPLAY_CATEGORIES.get(item["category"], {"label": item["category"]}))["label"]
     topic_name = TOPICS.get(item.get("topic", ""), {"label": category})["label"]
 
+    dynamic_authoring = item.get("source_name", "") == "AI-generated editorial idea" or "original educational brief" in item.get("source_name", "").lower()
     preferences = get_writing_preferences()
     post_format = preferences["format"]
     tone = preferences["tone"]
     voice = preferences["voice"]
     depth = preferences["depth"]
     length = preferences["length"]
+    if dynamic_authoring:
+        # Do not impose saved global writing preferences on AI-generated ideas.
+        post_format, tone, voice, depth, length = "narrative", "insightful", "professional", "deep", "medium"
 
     format_guidance = {
         "narrative": "Write natural, flowing paragraphs. Vary paragraph length and build a clear line of thought.",
@@ -743,11 +748,7 @@ If the source is too thin to support a meaningful inference, say less rather
 than inventing insight. Do not treat a headline or promotional claim as proof.
 
 AUTHOR SETTINGS:
-Format: {post_format}. {format_guidance}
-Tone: {tone}. {tone_guidance}
-Voice: {voice}. {voice_guidance}
-Analysis depth: {depth}. {depth_guidance}
-Length: {length_guidance}.
+{("Choose the format, tone, point of view, opening, depth and length that best serve THIS specific idea and its audience. Do not follow a universal template. For an educational topic, teach the underlying concept accurately and use a worked example or exercise where useful. For interview preparation, state the question, reason through the solution and explain common mistakes. For a case study, distinguish known facts from interpretation. For news, verify the announcement and explain its implications. Avoid forced first-person voice, generic CTAs and irrelevant hashtags.") if dynamic_authoring else f"Format: {post_format}. {format_guidance}\nTone: {tone}. {tone_guidance}\nVoice: {voice}. {voice_guidance}\nAnalysis depth: {depth}. {depth_guidance}\nLength: {length_guidance}."}
 
 NON-NEGOTIABLE WRITING RULES:
 - Do not merely paraphrase the article. A reader should get an idea, not just a recap.
@@ -1259,7 +1260,7 @@ def approve(post_id: int):
         if not post: raise HTTPException(404, "Post not found")
         if post.status == "published": raise HTTPException(409, "Already published")
         post.status = "approved"; post.error = ""; db.commit()
-    return RedirectResponse(url="/?notice=Post+approved.+It+has+not+been+published", status_code=303)
+    return RedirectResponse(url="/editorial?notice=Post+approved.+It+is+ready+to+publish", status_code=303)
 
 @app.post("/posts/{post_id}/publish")
 def publish(post_id: int, account_id: int = Form(...)):
@@ -1600,15 +1601,105 @@ def _idea_query(category, topic, domain, angle, custom_topic=""):
         return f'{subject} fundamentals OR guide OR explained OR practical examples'
     return f'{subject} latest news OR announcement OR launch OR industry development'
 
-@app.get("/topics")
-def topic_library_redirect():
-    return RedirectResponse("/discover", status_code=303)
+DYNAMIC_CATEGORIES = {
+ "data_science": "Data Science & Analytics",
+ "ai_research": "AI & Machine Learning",
+ "agentic_ai": "Agentic AI",
+ "business_decoding": "Startups & Business",
+ "marketing": "Branding & Marketing",
+ "cloud_automation": "Cloud & Technology",
+ "product_innovation": "Product & Innovation",
+ "finance_business": "Finance & Business",
+ "careers": "Technology Careers",
+ "industry_news": "Industry & Tech News",
+}
+
+def _ai_json(prompt):
+    """Use configured text providers in the same fallback order as drafting."""
+    errors=[]
+    key=os.getenv("GEMINI_API_KEY", "").strip()
+    if key:
+        try:
+            with genai.Client(api_key=key) as client:
+                r=client.models.generate_content(model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"), contents=prompt)
+            raw=(r.text or "").strip()
+            raw=re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I)
+            return json.loads(raw)
+        except Exception as e: errors.append(f"Gemini: {e}")
+    key=os.getenv("GROQ_API_KEY", "").strip()
+    if key:
+        try:
+            r=Groq(api_key=key).chat.completions.create(model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),messages=[{"role":"user","content":prompt}],temperature=0.65,max_tokens=1600)
+            raw=(r.choices[0].message.content or "").strip(); raw=re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I)
+            return json.loads(raw)
+        except Exception as e: errors.append(f"Groq: {e}")
+    key=os.getenv("CEREBRAS_API_KEY", "").strip()
+    if key:
+        try:
+            r=Cerebras(api_key=key).chat.completions.create(model=os.getenv("CEREBRAS_MODEL", "qwen-3-235b-a22b-instruct"),messages=[{"role":"user","content":prompt}],temperature=0.65,max_completion_tokens=1600)
+            raw=(r.choices[0].message.content or "").strip(); raw=re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I)
+            return json.loads(raw)
+        except Exception as e: errors.append(f"Cerebras: {e}")
+    raise RuntimeError("AI providers unavailable or returned invalid JSON. " + " | ".join(errors))
+
+@app.post("/discover/generate-stage")
+async def discover_generate_stage(request: Request):
+    payload=await request.json()
+    stage=(payload.get("stage") or "").strip()
+    category=(payload.get("category") or "").strip()
+    if category not in DYNAMIC_CATEGORIES: raise HTTPException(400,"Choose a valid main category")
+    label=DYNAMIC_CATEGORIES[category]
+    if stage=="subtopics":
+        instruction=f"For the broad category '{label}', propose 8 diverse, useful subtopics spanning learning, practical work, interviews, industry/business applications and current developments where relevant. Avoid generic labels."
+        field="subtopics"
+    elif stage=="tracks":
+        subtopic=(payload.get("subtopic") or "").strip()[:180]
+        if not subtopic: raise HTTPException(400,"Choose a subtopic")
+        instruction=f"For category '{label}' and subtopic '{subtopic}', propose 6 distinct learning/content tracks or angles. Mix fundamentals, advanced concepts, practical implementation, interview preparation, real-world cases and critical analysis as relevant."
+        field="tracks"
+    elif stage=="ideas":
+        subtopic=(payload.get("subtopic") or "").strip()[:180]
+        track=(payload.get("track") or "").strip()[:180]
+        if not subtopic or not track: raise HTTPException(400,"Choose a subtopic and track")
+        instruction=f"For category '{label}', subtopic '{subtopic}', and track '{track}', create 6 highly specific LinkedIn content ideas. Each should teach something or offer a defensible insight. Avoid generic news headlines, invented statistics and repetitive ideas. Return objects with title and summary (2-3 sentences describing what the post will actually explain)."
+        field="ideas"
+    else: raise HTTPException(400,"Unknown generation stage")
+    prompt=("You are a rigorous editorial taxonomy designer for a professional LinkedIn content studio. "+instruction+f" Return ONLY valid JSON in this exact shape: {{\"{field}\": ["+("{\"title\":\"...\",\"summary\":\"...\"}" if field=="ideas" else "\"...\"")+ "]}}. No markdown fences.")
+    try:
+        result=_ai_json(prompt)
+        values=result.get(field,[])
+        if not isinstance(values,list) or not values: raise ValueError("AI returned no options")
+        if field!="ideas": values=[str(v).strip()[:180] for v in values if str(v).strip()][:10]
+        else:
+            clean=[]
+            with SessionLocal() as db:
+                for value in values[:8]:
+                    if not isinstance(value,dict) or not value.get("title"): continue
+                    title=str(value["title"]).strip()[:500]
+                    summary=str(value.get("summary","")).strip()[:2500]
+                    exists=db.query(EditorialIdea).filter_by(category=category,topic=subtopic,title=title).first()
+                    if exists: clean.append({"id":exists.id,"title":exists.title,"summary":exists.summary}); continue
+                    idea=EditorialIdea(category=category,topic=subtopic[:80],content_domain="education",editorial_angle="explain_why_it_matters",title=title,summary=summary+f"\n\nSelected track: {track}",source_name="AI-generated editorial idea",audience="professionals",difficulty="intermediate",status="idea")
+                    db.add(idea); db.flush(); clean.append({"id":idea.id,"title":title,"summary":summary})
+                db.commit()
+            values=clean
+        return JSONResponse({field:values})
+    except Exception as exc:
+        raise HTTPException(502, f"Could not generate the next step: {str(exc)[:350]}")
+
+@app.get("/topics", response_class=HTMLResponse)
+def topic_library(request: Request, notice: str = "", q: str = ""):
+    with SessionLocal() as db:
+        query=db.query(EditorialIdea).order_by(desc(EditorialIdea.created_at))
+        if q.strip(): query=query.filter((EditorialIdea.title.ilike(f"%{q.strip()}%")) | (EditorialIdea.topic.ilike(f"%{q.strip()}%")) | (EditorialIdea.summary.ilike(f"%{q.strip()}%")))
+        ideas=query.limit(200).all()
+    return templates.TemplateResponse(request=request,name="topics.html",context={"request":request,"ideas":ideas,"notice":notice,"q":q,"categories":DYNAMIC_CATEGORIES})
 
 @app.get("/discover", response_class=HTMLResponse)
 def discover_page(request: Request, notice: str = ""):
     with SessionLocal() as db:
         ideas = db.query(EditorialIdea).order_by(desc(EditorialIdea.created_at)).limit(40).all()
-    return templates.TemplateResponse(request=request, name="discover.html", context={"request":request,"notice":notice,"taxonomy":EDITORIAL_TAXONOMY,"domains":CONTENT_DOMAINS,"angles":EDITORIAL_ANGLES,"ideas":ideas})
+    return templates.TemplateResponse(request=request, name="discover.html", context={"request":request,"notice":notice,"taxonomy":DYNAMIC_CATEGORIES,"domains":CONTENT_DOMAINS,"angles":EDITORIAL_ANGLES,"ideas":ideas})
 
 @app.post("/discover/search")
 def discover_search(category: str = Form(...), topic: str = Form(""), content_domain: str = Form("industry_news"), editorial_angle: str = Form("explain_why_it_matters"), audience: str = Form("professionals"), difficulty: str = Form("intermediate"), custom_topic: str = Form(""), period: str = Form("latest"), post_format: str = Form("narrative"), post_tone: str = Form("professional"), point_of_view: str = Form("balanced"), hook_style: str = Form("strong_insight"), post_length: str = Form("medium"), cta_style: str = Form("insight"), creation_notes: str = Form("")):
@@ -1685,8 +1776,7 @@ def generate_from_idea(idea_id: int):
         if idea.content_domain in {"education", "evergreen"}:
             url = "https://www.google.com/search?q=" + requests.utils.quote(idea.topic or idea.title)
             source_name = "Original educational brief · search reference"
-        category_map = {"agentic_ai": "ai_research"}
-        idea_category = category_map.get(idea.category, idea.category)
+        idea_category = idea.category
         item = {"category":idea_category if idea_category in DISPLAY_CATEGORIES else "data_science","topic":idea.topic,"title":idea.title,"source_name":source_name,"url":url,"published":"","summary":(idea.summary or "") + f"\nEditorial domain: {CONTENT_DOMAINS.get(idea.content_domain,idea.content_domain)}. Editorial angle: {EDITORIAL_ANGLES.get(idea.editorial_angle,idea.editorial_angle)}. Audience: {idea.audience}. Difficulty: {idea.difficulty}. Do not invent facts or statistics."}
         draft = create_draft(item)
         fp = fingerprint(url, idea.title + str(idea.id))
@@ -1699,7 +1789,7 @@ def editorial_board(request: Request, notice: str = ""):
     with SessionLocal() as db:
         columns = {status: db.query(Post).filter(Post.status == status).order_by(desc(Post.created_at)).limit(60).all() for status in ["pending","approved","published","rejected","failed"]}
         ideas = db.query(EditorialIdea).filter(EditorialIdea.status.in_(["idea", "researching"])).order_by(desc(EditorialIdea.created_at)).limit(24).all()
-    return templates.TemplateResponse(request=request,name="editorial.html",context={"request":request,"notice":notice,"columns":columns,"ideas":ideas,"domains":CONTENT_DOMAINS,"angles":EDITORIAL_ANGLES,"categories":DISPLAY_CATEGORIES})
+    return templates.TemplateResponse(request=request,name="editorial.html",context={"request":request,"notice":notice,"columns":columns,"ideas":ideas,"domains":CONTENT_DOMAINS,"angles":EDITORIAL_ANGLES,"categories":DISPLAY_CATEGORIES,"accounts":get_linkedin_accounts()})
 
 @app.get("/posts/{post_id}/history", response_class=HTMLResponse)
 def post_history(request: Request, post_id: int):
