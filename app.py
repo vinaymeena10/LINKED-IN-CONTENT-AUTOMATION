@@ -64,6 +64,7 @@ DISPLAY_CATEGORIES = {
     "product_innovation": {"label": "Product & Innovation", "weight": 0},
     "finance_business": {"label": "Finance & Business", "weight": 0},
     "industry_news": {"label": "Industry & Tech News", "weight": 0},
+    "news": {"label": "News & Current Affairs", "weight": 0},
 }
 
 # User-selectable research topics. Each topic maps to a broad category for
@@ -187,6 +188,7 @@ class Post(Base):
     audience = Column(String(120), default="professionals")
     difficulty = Column(String(30), default="intermediate")
     content_brief = Column(Text, default="")
+    max_characters = Column(Integer, default=1800)
 
 class LinkedInAccount(Base):
     __tablename__ = "linkedin_accounts"
@@ -383,7 +385,18 @@ class EditorialIdea(Base):
     audience = Column(String(120), default="professionals")
     difficulty = Column(String(30), default="intermediate")
     status = Column(String(30), default="idea", index=True)
+    max_characters = Column(Integer, default=1800)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class DiscoveryGeneration(Base):
+    __tablename__ = "discovery_generations"
+    id = Column(Integer, primary_key=True)
+    stage = Column(String(30), nullable=False, index=True)
+    category = Column(String(60), nullable=False, index=True)
+    context_key = Column(String(500), nullable=False, index=True)
+    value = Column(String(700), nullable=False)
+    fingerprint = Column(String(64), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 class PostRevision(Base):
     __tablename__ = "post_revisions"
@@ -430,9 +443,13 @@ with engine.begin() as connection:
         ("audience", "VARCHAR(120)", "'professionals'"),
         ("difficulty", "VARCHAR(30)", "'intermediate'"),
         ("content_brief", "TEXT", "''"),
+        ("max_characters", "INTEGER", "1800"),
     ]:
         if column_name not in columns:
             connection.execute(text(f"ALTER TABLE posts ADD COLUMN {column_name} {sql_type} DEFAULT {default_sql}"))
+    idea_columns = {column["name"] for column in inspect(connection).get_columns("editorial_ideas")}
+    if "max_characters" not in idea_columns:
+        connection.execute(text("ALTER TABLE editorial_ideas ADD COLUMN max_characters INTEGER DEFAULT 1800"))
 
 # Preserve a previously connected single LinkedIn account when upgrading.
 with SessionLocal() as db:
@@ -712,6 +729,7 @@ def create_draft(item):
     }[depth]
     length_guidance = {"short": "70-120 words", "medium": "130-220 words", "long": "220-350 words"}[length]
 
+    max_characters = max(300, min(3000, int(item.get("max_characters") or 1800)))
     source_line_instruction = "Put the source URL on the final line."
     if "educational brief" in (item.get("source_name", "").lower()):
         source_line_instruction = "This is an original educational prompt, not a news source. Do not append a fabricated citation or source URL. Teach accurately, state assumptions where needed, and include a worked example or learner exercise when appropriate."
@@ -769,6 +787,8 @@ than inventing insight. Do not treat a headline or promotional claim as proof.
 AUTHOR SETTINGS:
 {author_settings}
 
+CHARACTER LIMIT (STRICT): Write no more than {max_characters} characters including spaces, punctuation, hashtags and the source URL. This is a hard maximum, not a target you must fill. Use fewer characters whenever that produces a stronger post. Never exceed 3,000 characters under any circumstances.
+
 NON-NEGOTIABLE WRITING RULES:
 - Do not merely paraphrase the article. A reader should get an idea, not just a recap.
 - Avoid formulaic labels such as "Why it matters", "Practical takeaway", "Key takeaways" and "In today's rapidly evolving world".
@@ -786,11 +806,6 @@ NON-NEGOTIABLE WRITING RULES:
 - Use 2-4 relevant hashtags, only if they add value.
 - {source_line_instruction}
 - Return only the finished LinkedIn post.
-- Before finalising, silently score the draft for factual support, originality, specificity,
-  conceptual depth, audience value and naturalness. Rewrite weak or generic passages.
-- A strong post must contain at least one concrete explanation, example, mechanism,
-  useful distinction or defensible inference—not merely motivational commentary.
-- Keep the entire post below 3,000 characters, including spaces and hashtags.
 
 CATEGORY: {category}
 SELECTED TOPIC: {topic_name}
@@ -839,7 +854,7 @@ conclusion. It should feel authored, not assembled from a template.
             draft = (response.text or "").strip()
             if draft:
                 print(f"Draft generated with Gemini ({model})")
-                return normalize_linkedin_bullets(draft)
+                return _clip_linkedin_post(draft, max_characters)
             raise RuntimeError("Gemini returned an empty draft.")
         except Exception as exc:
             failures.append(f"Gemini: {exc}")
@@ -862,7 +877,7 @@ conclusion. It should feel authored, not assembled from a template.
             draft = (response.choices[0].message.content or "").strip()
             if draft:
                 print(f"Draft generated with Groq ({model})")
-                return normalize_linkedin_bullets(draft)
+                return _clip_linkedin_post(draft, max_characters)
             raise RuntimeError("Groq returned an empty draft.")
         except Exception as exc:
             failures.append(f"Groq: {exc}")
@@ -887,7 +902,7 @@ conclusion. It should feel authored, not assembled from a template.
             draft = (response.choices[0].message.content or "").strip()
             if draft:
                 print(f"Draft generated with Cerebras ({model})")
-                return normalize_linkedin_bullets(draft)
+                return _clip_linkedin_post(draft, max_characters)
             raise RuntimeError("Cerebras returned an empty draft.")
         except Exception as exc:
             failures.append(f"Cerebras: {exc}")
@@ -1594,7 +1609,8 @@ EDITORIAL_TAXONOMY = {
  "business_decoding": {"label":"Startup & Business Decoding","topics":["Emerging startups","Newly funded startups","Founder stories","Business models","Unit economics","Venture capital","Product innovation","Market disruption","Startup failures","Competitor analysis"],"angles":["Startup spotlight","How it makes money","Why it is growing","Founder decision decoded","Competitor versus incumbent","Funding round explained","What could go wrong"]},
  "marketing": {"label":"Branding & Marketing","topics":["Emerging brands","Brand positioning & identity","Campaigns & advertisements","Viral marketing","Consumer psychology","Growth marketing","Influencer marketing","Product launches","Promotions & pricing","Brand crises & rebranding","Martech & AI marketing"],"angles":["Campaign decoded","Brand strategy breakdown","Consumer psychology explained","Creative strategy analysis","Promotion mechanics","Competitor positioning","What marketers can learn"]},
  "cloud_automation": {"label":"Cloud, Technology & Automation","topics":["AWS, Azure & GCP","Cloud architecture","DevOps & CI/CD","Docker & Kubernetes","Data platforms","APIs & integrations","Cybersecurity","Open source releases","Automation workflows"],"angles":["Hands-on tutorial","Architecture explained","Tool comparison","Pricing decoded","Product release analysis","Implementation case study"]},
- "careers": {"label":"Technology Careers","topics":["Career roadmaps","SQL & Python interviews","Machine learning interviews","System design","Portfolio projects","Hiring trends","Skills intelligence","Resume & LinkedIn","Career transitions"],"angles":["Interview question with solution","30-day learning roadmap","Portfolio project brief","Skill gap analysis","Hiring trend decoded","Career myth versus reality"]}
+ "careers": {"label":"Technology Careers","topics":["Career roadmaps","SQL & Python interviews","Machine learning interviews","System design","Portfolio projects","Hiring trends","Skills intelligence","Resume & LinkedIn","Career transitions"],"angles":["Interview question with solution","30-day learning roadmap","Portfolio project brief","Skill gap analysis","Hiring trend decoded","Career myth versus reality"]},
+ "news": {"label":"News & Current Affairs","topics":["Artificial intelligence news","Technology company announcements","Science and research breakthroughs","Startup and funding news","Cybersecurity incidents and policy","Economy and business developments","Product launches and updates","Regulation and public policy","Global events with technology impact"],"angles":["What happened and what is verified","Why this development matters","Second-order implications","What the headline misses","Who benefits and who is affected","Fact-check and context","What happens next"]}
 }
 CONTENT_DOMAINS = {
  "education":"Education & learning", "industry_news":"Industry news & announcements", "research":"Research & publications", "business":"Business intelligence & case studies", "emerging_players":"Emerging startups & brands", "tools":"Tools, tutorials & implementation", "careers":"Careers & hiring", "opinion":"Opinion, debate & thought leadership", "media":"Campaigns, media & creative work", "evergreen":"Evergreen explainers"
@@ -1636,201 +1652,175 @@ DYNAMIC_CATEGORIES = {
  "finance_business": "Finance & Business",
  "careers": "Technology Careers",
  "industry_news": "Industry & Tech News",
+ "news": "News & Current Affairs",
 }
-
-def _extract_json_object(raw: str):
-    """Parse model JSON even when a provider wraps it in fences or brief prose."""
-    raw = (raw or "").strip()
-    raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.I)
-    raw = re.sub(r"\s*```$", "", raw)
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-    decoder = json.JSONDecoder()
-    for index, char in enumerate(raw):
-        if char == "{":
-            try:
-                value, _ = decoder.raw_decode(raw[index:])
-                if isinstance(value, dict):
-                    return value
-            except json.JSONDecodeError:
-                continue
-    raise ValueError("The AI provider did not return valid JSON.")
-
 
 def _ai_json(prompt):
-    """Use configured providers in order; tolerate common JSON wrapping errors."""
-    errors = []
-    providers = [
-        ("Gemini", bool(os.getenv("GEMINI_API_KEY", "").strip())),
-        ("Groq", bool(os.getenv("GROQ_API_KEY", "").strip())),
-        ("Cerebras", bool(os.getenv("CEREBRAS_API_KEY", "").strip())),
-    ]
-    for provider, configured in providers:
-        if not configured:
-            errors.append(f"{provider}: API key not configured")
-            continue
+    """Use configured text providers in the same fallback order as drafting."""
+    errors=[]
+    key=os.getenv("GEMINI_API_KEY", "").strip()
+    if key:
         try:
-            if provider == "Gemini":
-                with genai.Client(api_key=os.getenv("GEMINI_API_KEY", "").strip()) as client:
-                    response = client.models.generate_content(
-                        model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"),
-                        contents=prompt,
-                    )
-                raw = response.text or ""
-            elif provider == "Groq":
-                response = Groq(api_key=os.getenv("GROQ_API_KEY", "").strip()).chat.completions.create(
-                    model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.55,
-                    max_tokens=2400,
-                    response_format={"type": "json_object"},
-                )
-                raw = response.choices[0].message.content or ""
-            else:
-                response = Cerebras(api_key=os.getenv("CEREBRAS_API_KEY", "").strip()).chat.completions.create(
-                    model=os.getenv("CEREBRAS_MODEL", "qwen-3-235b-a22b-instruct"),
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.55,
-                    max_completion_tokens=2400,
-                    response_format={"type": "json_object"},
-                    stream=False,
-                )
-                raw = response.choices[0].message.content or ""
-            return _extract_json_object(raw)
-        except Exception as exc:
-            errors.append(f"{provider}: {str(exc)[:220]}")
-            print(f"{provider} structured generation failed: {exc}")
-    raise RuntimeError("All configured AI providers failed. " + " | ".join(errors))
+            with genai.Client(api_key=key) as client:
+                r=client.models.generate_content(model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash"), contents=prompt)
+            raw=(r.text or "").strip()
+            raw=re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I)
+            return json.loads(raw)
+        except Exception as e: errors.append(f"Gemini: {e}")
+    key=os.getenv("GROQ_API_KEY", "").strip()
+    if key:
+        try:
+            r=Groq(api_key=key).chat.completions.create(model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),messages=[{"role":"user","content":prompt}],temperature=0.9,max_tokens=2000)
+            raw=(r.choices[0].message.content or "").strip(); raw=re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I)
+            return json.loads(raw)
+        except Exception as e: errors.append(f"Groq: {e}")
+    key=os.getenv("CEREBRAS_API_KEY", "").strip()
+    if key:
+        try:
+            r=Cerebras(api_key=key).chat.completions.create(model=os.getenv("CEREBRAS_MODEL", "qwen-3-235b-a22b-instruct"),messages=[{"role":"user","content":prompt}],temperature=0.9,max_completion_tokens=2000)
+            raw=(r.choices[0].message.content or "").strip(); raw=re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I)
+            return json.loads(raw)
+        except Exception as e: errors.append(f"Cerebras: {e}")
+    raise RuntimeError("AI providers unavailable or returned invalid JSON. " + " | ".join(errors))
+
+def _normalise_generation_text(value):
+    return " ".join(re.sub(r"[^a-z0-9 ]+", " ", str(value).lower()).split())
 
 
-DYNAMIC_CATEGORIES = {
-    "data_science": "Data Science & Analytics",
-    "ai_research": "AI & Machine Learning",
-    "agentic_ai": "Agentic AI",
-    "business_decoding": "Startups & Business",
-    "marketing": "Branding & Marketing",
-    "cloud_automation": "Cloud & Technology",
-    "product_innovation": "Product & Innovation",
-    "finance_business": "Finance & Business",
-    "careers": "Technology Careers",
-    "industry_news": "Industry & Tech News",
-}
+def _novelty_similarity(left, right):
+    a=set(_normalise_generation_text(left).split())
+    b=set(_normalise_generation_text(right).split())
+    if not a or not b:
+        return 0.0
+    return len(a & b) / max(1, len(a | b))
 
 
-def _editorial_reasoning_context(category_label):
-    return f"""You are the research director and editorial strategist of a premium professional publication.
-The selected category is: {category_label}.
-Think like a subject-matter expert, teacher, researcher and sharp editor—not a social-media template generator.
-Explore the category broadly: foundational concepts, advanced methods, practical implementation,
-case studies, interviews, business applications, debates, failures, trade-offs and emerging work.
-Do not assume every category is about breaking news. Include education and interview preparation
-when relevant. Prefer specific concepts over vague umbrella labels. Avoid duplicate ideas that
-only change wording. Do not invent studies, statistics, product features or current events.
-Return concise, useful options that a knowledgeable professional would genuinely want to explore."""
+def _remember_discovery_value(db, stage, category, context_key, value):
+    normal=_normalise_generation_text(value)
+    fingerprint=hashlib.sha256(f"{stage}|{category}|{context_key}|{normal}".encode("utf-8")).hexdigest()
+    if db.query(DiscoveryGeneration).filter_by(fingerprint=fingerprint).first():
+        return False
+    db.add(DiscoveryGeneration(stage=stage,category=category,context_key=context_key,value=str(value)[:700],fingerprint=fingerprint))
+    return True
+
+
+def _clip_linkedin_post(text_value, limit):
+    limit=max(300,min(3000,int(limit or 1800)))
+    value=normalize_linkedin_bullets((text_value or "").strip())
+    if len(value)<=limit:
+        return value
+    candidate=value[:limit]
+    # Prefer a complete sentence/paragraph; fall back to a word boundary.
+    cut=max(candidate.rfind(". "),candidate.rfind("! "),candidate.rfind("? "),candidate.rfind("\n\n"))
+    if cut >= int(limit*0.68):
+        candidate=candidate[:cut+1]
+    else:
+        candidate=candidate.rsplit(" ",1)[0]
+    return candidate.rstrip(" ,;:-")
 
 
 @app.post("/discover/generate-stage")
 async def discover_generate_stage(request: Request):
-    payload = await request.json()
-    stage = (payload.get("stage") or "").strip()
-    category = (payload.get("category") or "").strip()
-    if category not in DYNAMIC_CATEGORIES:
-        raise HTTPException(400, "Choose a valid main category")
-    label = DYNAMIC_CATEGORIES[category]
-    context = _editorial_reasoning_context(label)
-
-    if stage == "subtopics":
-        field = "subtopics"
-        instruction = """Generate 10–12 genuinely distinct subtopics. Cover the category's important
-knowledge areas, practical skills, real-world applications, interview/learning opportunities,
-and relevant industry developments. Each item must be a clear, selectable subject—not a post title.
-Avoid generic options such as 'latest trends' unless made specific."""
-    elif stage == "tracks":
-        subtopic = (payload.get("subtopic") or "").strip()[:180]
-        if not subtopic:
-            raise HTTPException(400, "Choose a subtopic")
-        field = "tracks"
-        instruction = f"""For subtopic '{subtopic}', generate 8 distinct tracks. Each track should represent
-an actual direction of exploration, such as fundamentals, advanced theory, implementation,
-interview preparation, hands-on projects, case studies, evaluation, or critical debate—choose
-only those that fit this subject. Make them specific to this subtopic, not a generic universal list."""
-    elif stage == "ideas":
-        subtopic = (payload.get("subtopic") or "").strip()[:180]
-        track = (payload.get("track") or "").strip()[:180]
-        if not subtopic or not track:
-            raise HTTPException(400, "Choose a subtopic and track")
-        field = "ideas"
-        instruction = f"""For subtopic '{subtopic}' and track '{track}', generate 8 original, specific
-content concepts suitable for a high-quality LinkedIn post. Return objects with title, summary,
-editorial_thesis and reader_value. Each concept must have a distinct argument or learning outcome.
-Include concrete mechanisms, examples, technical depth or a defensible point of view where relevant.
-Do not generate generic listicles, empty motivational claims, clickbait or fabricated personal stories.
-Summaries should explain what the writer will actually teach or reason through."""
+    payload=await request.json()
+    stage=(payload.get("stage") or "").strip()
+    category=(payload.get("category") or "").strip()
+    if category not in DYNAMIC_CATEGORIES: raise HTTPException(400,"Choose a valid main category")
+    label=DYNAMIC_CATEGORIES[category]
+    max_characters=max(300,min(3000,int(payload.get("max_characters") or 1800)))
+    subtopic=(payload.get("subtopic") or "").strip()[:180]
+    track=(payload.get("track") or "").strip()[:180]
+    if stage=="subtopics":
+        context_key=category
+        field="subtopics"
+        instruction=f"For the broad category '{label}', propose 10 genuinely distinct, high-value subtopics. Include conceptual learning, advanced practice, real-world applications, interviews and important current developments where appropriate. Avoid generic labels and avoid repeating any previous suggestions."
+    elif stage=="tracks":
+        if not subtopic: raise HTTPException(400,"Choose a subtopic")
+        context_key=f"{category}|{_normalise_generation_text(subtopic)}"
+        field="tracks"
+        instruction=f"For category '{label}' and subtopic '{subtopic}', propose 8 distinct next-step tracks. They must be meaningfully different from one another and from the excluded previous tracks. Explore different intellectual lenses: foundations, advanced mechanics, implementation, debugging, evaluation, interview reasoning, business impact, research critique, practical projects or other genuinely relevant directions."
+    elif stage=="ideas":
+        if not subtopic or not track: raise HTTPException(400,"Choose a subtopic and track")
+        context_key=f"{category}|{_normalise_generation_text(subtopic)}|{_normalise_generation_text(track)}"
+        field="ideas"
+        instruction=f"For category '{label}', subtopic '{subtopic}', and track '{track}', create 8 highly specific, original LinkedIn content ideas. Each must have a distinct thesis and teach something concrete or offer a defensible insight. Do not produce generic listicles, recycled hooks, invented statistics or near-duplicates. Return objects with title and summary (2-3 sentences explaining the actual intellectual substance)."
     else:
-        raise HTTPException(400, "Unknown generation stage")
+        raise HTTPException(400,"Unknown generation stage")
 
-    if field == "ideas":
-        shape = '{"ideas":[{"title":"...","summary":"...","editorial_thesis":"...","reader_value":"..."}]}'
-    else:
-        shape = '{"' + field + '":["..."]}'
-    prompt = f"{context}\n\nTASK: {instruction}\nReturn ONLY valid JSON in this shape: {shape}"
-    try:
-        result = _ai_json(prompt)
-        values = result.get(field, [])
-        if not isinstance(values, list) or not values:
-            raise ValueError("AI returned no options")
-        if field != "ideas":
-            seen = set()
-            clean_values = []
+    # Persistent novelty memory: exact repeats are blocked across all past runs;
+    # recent examples are also supplied to the model to reduce semantic repeats.
+    with SessionLocal() as db:
+        previous=[row.value for row in db.query(DiscoveryGeneration).filter_by(stage=stage,category=category,context_key=context_key).order_by(desc(DiscoveryGeneration.created_at)).all()]
+    excluded="\n".join(f"- {v}" for v in previous[:100]) or "- None yet"
+    final_values=[]
+    errors=[]
+    for attempt in range(4):
+        nonce=secrets.token_hex(12)
+        schema='{"title":"...","summary":"..."}' if field=="ideas" else '"..."'
+        prompt=(
+            "You are an unusually creative, rigorous editorial research strategist. "
+            + instruction
+            + f"\n\nNOVELTY MEMORY — DO NOT REPEAT OR PARAPHRASE THESE PRIOR OUTPUTS:\n{excluded}"
+            + f"\n\nThis is generation run {nonce}. Treat it as a fresh creative brief. Explore different conceptual territory, not just synonyms."
+            + f"\nThe eventual LinkedIn post may contain at most {max_characters} characters. Keep each idea focused enough to support that limit."
+            + f"\nReturn ONLY valid JSON in this exact shape: {{\"{field}\": [{schema}]}}. No markdown fences."
+        )
+        try:
+            result=_ai_json(prompt)
+            values=result.get(field,[])
+            if not isinstance(values,list) or not values:
+                raise ValueError("AI returned no options")
+            candidates=[]
             for value in values:
-                value = re.sub(r"\s+", " ", str(value)).strip()[:180]
-                key = value.casefold()
-                if value and key not in seen:
-                    seen.add(key)
-                    clean_values.append(value)
-            values = clean_values[:12]
-        else:
-            clean = []
-            seen_titles = set()
-            with SessionLocal() as db:
-                for value in values[:10]:
-                    if not isinstance(value, dict) or not value.get("title"):
+                if field=="ideas":
+                    if not isinstance(value,dict) or not value.get("title"): continue
+                    title=str(value["title"]).strip()[:500]
+                    summary=str(value.get("summary","")).strip()[:2500]
+                    candidate={"title":title,"summary":summary}
+                    compare_text=title
+                else:
+                    title=str(value).strip()[:180]
+                    if not title: continue
+                    candidate=title
+                    compare_text=title
+                if any(_novelty_similarity(compare_text, _normalise_generation_text(old)) >= 0.78 for old in previous):
+                    continue
+                if any(_novelty_similarity(compare_text, _normalise_generation_text(x["title"] if isinstance(x,dict) else x)) >= 0.78 for x in candidates):
+                    continue
+                candidates.append(candidate)
+            if candidates:
+                final_values=candidates
+                break
+            errors.append(f"Attempt {attempt+1}: all suggestions repeated prior ideas")
+        except Exception as exc:
+            errors.append(f"Attempt {attempt+1}: {str(exc)[:180]}")
+
+    if not final_values:
+        raise HTTPException(502,"The model could not produce sufficiently new suggestions after four attempts. Try again; the existing suggestions have not been repeated.")
+
+    try:
+        with SessionLocal() as db:
+            if field=="ideas":
+                saved=[]
+                for value in final_values[:8]:
+                    title=value["title"]
+                    summary=value["summary"]
+                    if not _remember_discovery_value(db,stage,category,context_key,title):
                         continue
-                    title = re.sub(r"\s+", " ", str(value["title"])).strip()[:500]
-                    if title.casefold() in seen_titles:
-                        continue
-                    seen_titles.add(title.casefold())
-                    summary = str(value.get("summary", "")).strip()[:2500]
-                    thesis = str(value.get("editorial_thesis", "")).strip()[:1200]
-                    reader_value = str(value.get("reader_value", "")).strip()[:1200]
-                    exists = db.query(EditorialIdea).filter_by(category=category, topic=subtopic, title=title).first()
-                    if exists:
-                        clean.append({"id": exists.id, "title": exists.title, "summary": exists.summary})
-                        continue
-                    complete_summary = summary
-                    if thesis:
-                        complete_summary += "\n\nEditorial thesis: " + thesis
-                    if reader_value:
-                        complete_summary += "\n\nReader value: " + reader_value
-                    complete_summary += "\n\nSelected track: " + track
-                    idea = EditorialIdea(
-                        category=category, topic=subtopic[:80], content_domain="education",
-                        editorial_angle="explain_why_it_matters", title=title,
-                        summary=complete_summary, source_name="AI-generated editorial idea",
-                        audience="professionals", difficulty="intermediate", status="idea",
-                    )
-                    db.add(idea)
-                    db.flush()
-                    clean.append({"id": idea.id, "title": title, "summary": summary})
-                db.commit()
-            values = clean
-        if not values:
-            raise ValueError("No usable options were returned by the AI provider")
-        return JSONResponse({field: values})
+                    idea=EditorialIdea(category=category,topic=subtopic[:80],content_domain="education",editorial_angle="explain_why_it_matters",title=title,summary=summary+f"\n\nSelected track: {track}",source_name="AI-generated editorial idea",audience="professionals",difficulty="intermediate",status="idea",max_characters=max_characters)
+                    db.add(idea); db.flush()
+                    saved.append({"id":idea.id,"title":title,"summary":summary})
+                final_values=saved
+            else:
+                for value in final_values:
+                    _remember_discovery_value(db,stage,category,context_key,value)
+            db.commit()
+        if not final_values:
+            raise HTTPException(502,"All generated ideas were already in your library. Click again for a fresh set.")
+        return JSONResponse({field:final_values,"max_characters":max_characters,"generation_id":secrets.token_hex(8)})
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(502, f"Could not generate the next step: {str(exc)[:350]}")
+        raise HTTPException(502,f"Could not save the new suggestions: {str(exc)[:250]}")
 
 @app.get("/topics", response_class=HTMLResponse)
 def topic_library(request: Request, notice: str = "", q: str = ""):
@@ -1912,7 +1902,7 @@ def mark_idea_researching(idea_id: int):
     return RedirectResponse("/editorial?notice=Idea+moved+to+Researching", status_code=303)
 
 @app.post("/ideas/{idea_id}/generate")
-def generate_from_idea(idea_id: int):
+def generate_from_idea(idea_id: int, max_characters: int = Form(1800)):
     with SessionLocal() as db:
         idea = db.get(EditorialIdea, idea_id)
         if not idea: raise HTTPException(404, "Idea not found")
@@ -1922,10 +1912,12 @@ def generate_from_idea(idea_id: int):
             url = "https://www.google.com/search?q=" + requests.utils.quote(idea.topic or idea.title)
             source_name = "Original educational brief · search reference"
         idea_category = idea.category
-        item = {"category":idea_category if idea_category in DISPLAY_CATEGORIES else "data_science","topic":idea.topic,"title":idea.title,"source_name":source_name,"url":url,"published":"","summary":(idea.summary or "") + f"\nEditorial domain: {CONTENT_DOMAINS.get(idea.content_domain,idea.content_domain)}. Editorial angle: {EDITORIAL_ANGLES.get(idea.editorial_angle,idea.editorial_angle)}. Audience: {idea.audience}. Difficulty: {idea.difficulty}. Do not invent facts or statistics."}
+        selected_cap=max(300,min(3000,int(max_characters or idea.max_characters or 1800)))
+        idea.max_characters=selected_cap
+        item = {"category":idea_category if idea_category in DISPLAY_CATEGORIES else "data_science","topic":idea.topic,"title":idea.title,"source_name":source_name,"url":url,"published":"","max_characters":selected_cap,"summary":(idea.summary or "") + f"\nEditorial domain: {CONTENT_DOMAINS.get(idea.content_domain,idea.content_domain)}. Editorial angle: {EDITORIAL_ANGLES.get(idea.editorial_angle,idea.editorial_angle)}. Audience: {idea.audience}. Difficulty: {idea.difficulty}. Do not invent facts or statistics."}
         draft = create_draft(item)
         fp = fingerprint(url, idea.title + str(idea.id))
-        post = Post(category=item["category"],topic=idea.topic[:60],title=idea.title[:500],source_url=url,source_name=item["source_name"],source_published="",draft=draft,status="pending",fingerprint=fp,content_domain=idea.content_domain,editorial_angle=idea.editorial_angle,audience=idea.audience,difficulty=idea.difficulty,content_brief=idea.summary or "")
+        post = Post(category=item["category"],topic=idea.topic[:60],title=idea.title[:500],source_url=url,source_name=item["source_name"],source_published="",draft=draft,status="pending",fingerprint=fp,content_domain=idea.content_domain,editorial_angle=idea.editorial_angle,audience=idea.audience,difficulty=idea.difficulty,content_brief=idea.summary or "",max_characters=selected_cap)
         db.add(post); idea.status="drafted"; db.commit()
     return RedirectResponse("/?notice=Idea+turned+into+a+draft", status_code=303)
 
