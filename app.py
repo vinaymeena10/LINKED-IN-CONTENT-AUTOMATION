@@ -1803,7 +1803,33 @@ def _parse_candidate_list(result, field):
     return parsed
 
 
-def _independent_semantic_review(label, stage, candidates, subtopic="", track=""):
+def _country_scope_instruction(mode, countries):
+    """Build a geographic lens without constraining which subjects the AI may discover."""
+    mode = (mode or "worldwide").strip().lower()
+    clean = [str(x).strip() for x in (countries or []) if str(x).strip()]
+    if mode == "india":
+        return ("GEOGRAPHIC LENS: Focus on India. Prefer developments, institutions, "
+                "markets, public issues and real-world examples relevant to India. "
+                "Use international comparisons only when they materially clarify the subject.")
+    if mode == "trending":
+        return ("GEOGRAPHIC LENS: Do not assume India is the default. Independently identify "
+                "the countries most relevant to this category and discovery direction. For "
+                "current-affairs/news subjects, prioritise countries with significant, widely "
+                "reported developments relevant to the subject. Explain country relevance "
+                "through the topic itself; do not invent a 'hot country' ranking or claim "
+                "real-time trend verification without current sources.")
+    if mode == "selected" and clean:
+        names = ", ".join(clean[:20])
+        return (f"GEOGRAPHIC LENS: Restrict the main focus to these selected countries: {names}. "
+                "Generate topics grounded in these places. Do not silently substitute India "
+                "or broaden to unrelated countries. Comparisons between selected countries "
+                "are allowed when meaningful.")
+    return ("GEOGRAPHIC LENS: Worldwide. Explore relevant developments and subjects across "
+            "countries; do not default to India. Select geography based on the subject's "
+            "actual relevance and include multiple regions where appropriate.")
+
+
+def _independent_semantic_review(label, stage, candidates, subtopic="", track="", geographic_lens=""):
     """Second model call: independently judge category fit and conceptual quality."""
     if not candidates:
         return []
@@ -1815,6 +1841,7 @@ Selected category: {label}
 Generation stage: {stage}
 Selected parent subject: {subtopic or 'None'}
 Selected parent direction: {track or 'None'}
+Geographic scope: {geographic_lens or 'Worldwide'}
 
 {boundary}
 
@@ -1859,14 +1886,24 @@ async def discover_generate_stage(request: Request):
     max_characters=max(300,min(3000,int(payload.get("max_characters") or 1800)))
     subtopic=(payload.get("subtopic") or "").strip()[:180]
     track=(payload.get("track") or "").strip()[:180]
+    country_mode=(payload.get("country_mode") or "worldwide").strip().lower()
+    allowed_country_modes={"worldwide", "india", "trending", "selected"}
+    if country_mode not in allowed_country_modes:
+        country_mode="worldwide"
+    allowed_countries={"United States", "United Kingdom", "Canada", "Australia", "United Arab Emirates", "Saudi Arabia", "Singapore", "Germany", "France", "Japan", "China", "South Korea", "Brazil", "South Africa", "Indonesia", "Malaysia", "Netherlands", "Switzerland", "New Zealand", "India", "Mexico", "Turkey", "Italy", "Spain", "Nigeria", "Kenya", "Israel", "Ukraine", "Russia"}
+    selected_countries=[c for c in payload.get("countries", []) if isinstance(c, str) and c in allowed_countries][:20]
+    if country_mode == "selected" and not selected_countries:
+        raise HTTPException(400,"Select at least one country or choose another geographic scope")
+    geographic_lens=_country_scope_instruction(country_mode,selected_countries)
+    geo_key=(country_mode+":"+",".join(sorted(selected_countries)))
     if stage=="subtopics":
-        context_key=category; field="subtopics"
+        context_key=f"{category}|{geo_key}"; field="subtopics"
     elif stage=="tracks":
         if not subtopic: raise HTTPException(400,"Choose a subtopic")
-        context_key=f"{category}|{_normalise_generation_text(subtopic)}"; field="tracks"
+        context_key=f"{category}|{geo_key}|{_normalise_generation_text(subtopic)}"; field="tracks"
     elif stage=="ideas":
         if not subtopic or not track: raise HTTPException(400,"Choose a subtopic and track")
-        context_key=f"{category}|{_normalise_generation_text(subtopic)}|{_normalise_generation_text(track)}"; field="ideas"
+        context_key=f"{category}|{geo_key}|{_normalise_generation_text(subtopic)}|{_normalise_generation_text(track)}"; field="ideas"
     else:
         raise HTTPException(400,"Unknown generation stage")
 
@@ -1884,6 +1921,7 @@ Selected category: {label}
 Stage: {stage}
 Selected subtopic: {subtopic or 'None'}
 Selected track: {track or 'None'}
+{geographic_lens}
 
 Before generating, privately reason through the actual boundaries and intellectual landscape of this field. Explore multiple genuinely relevant perspectives, identify important knowledge gaps and useful questions, then choose a fresh direction for this run. Do not expose chain-of-thought. Return a compact discovery brief with 4-6 distinct exploration territories and one sentence explaining why each is relevant. Do not name a fixed taxonomy and do not invent terminology.
 
@@ -1906,6 +1944,7 @@ Selected category: {label}
 Stage: {stage}
 Selected subtopic: {subtopic or 'None'}
 Selected track: {track or 'None'}
+{geographic_lens}
 
 {instruction}
 
@@ -1930,7 +1969,7 @@ Return ONLY valid JSON in this exact shape: {{"{field}":[{schema}]}}. No markdow
                 if any(_novelty_similarity(compare_text,_normalise_generation_text(x["title"] if isinstance(x,dict) else x)) >= 0.62 for x in candidates):
                     continue
                 candidates.append(value)
-            reviewed=_independent_semantic_review(label,stage,candidates,subtopic,track)
+            reviewed=_independent_semantic_review(label,stage,candidates,subtopic,track,geographic_lens)
             if reviewed:
                 final_values=reviewed
                 # Retry only when the evaluator left too few useful options.
@@ -1951,7 +1990,7 @@ Return ONLY valid JSON in this exact shape: {{"{field}":[{schema}]}}. No markdow
                     title=value["title"]; summary=value["summary"]
                     if not _remember_discovery_value(db,stage,category,context_key,title):
                         continue
-                    idea=EditorialIdea(category=category,topic=subtopic[:80],content_domain="education",editorial_angle="explain_why_it_matters",title=title,summary=summary+f"\n\nSelected track: {track}",source_name="AI-generated editorial idea",audience="professionals",difficulty="intermediate",status="idea",max_characters=max_characters)
+                    idea=EditorialIdea(category=category,topic=subtopic[:80],content_domain="education",editorial_angle="explain_why_it_matters",title=title,summary=summary+f"\n\nSelected track: {track}\nGeographic focus: {geographic_lens}",source_name="AI-generated editorial idea",audience="professionals",difficulty="intermediate",status="idea",max_characters=max_characters)
                     db.add(idea); db.flush(); saved.append({"id":idea.id,"title":title,"summary":summary})
                 final_values=saved
             else:
@@ -1960,7 +1999,7 @@ Return ONLY valid JSON in this exact shape: {{"{field}":[{schema}]}}. No markdow
             db.commit()
         if not final_values:
             raise HTTPException(502,"These suggestions already exist in your library. Regenerate for a different discovery direction.")
-        return JSONResponse({field:final_values,"max_characters":max_characters,"generation_id":secrets.token_hex(8)})
+        return JSONResponse({field:final_values,"max_characters":max_characters,"country_mode":country_mode,"countries":selected_countries,"generation_id":secrets.token_hex(8)})
     except HTTPException:
         raise
     except Exception as exc:
